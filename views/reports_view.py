@@ -2,7 +2,16 @@ import flet as ft
 
 from models.database import Project
 from services.project_service import ProjectService
-from views.ui_helpers import empty_state, format_datetime, section_header, show_snack
+from views.ui_helpers import (
+    empty_state,
+    format_datetime,
+    page_container,
+    primary_button,
+    section_header,
+    show_snack,
+    stat_card,
+    surface_card,
+)
 
 
 @ft.component
@@ -44,48 +53,26 @@ def ReportsView(projects: list[Project]):
         spacing=12,
         run_spacing=12,
         controls=[
-            ft.Container(
-                col={"xs": 12, "sm": 4},
-                padding=16,
-                border_radius=12,
+            stat_card(
+                "提交数",
+                str(len(records)),
+                icon=ft.Icons.COMMIT,
                 bgcolor=ft.Colors.PRIMARY_CONTAINER,
-                content=ft.Column(
-                    spacing=4,
-                    controls=[
-                        ft.Text("提交数", color=ft.Colors.ON_PRIMARY_CONTAINER),
-                        ft.Text(str(len(records)), size=28, weight=ft.FontWeight.BOLD),
-                    ],
-                ),
+                fgcolor=ft.Colors.ON_PRIMARY_CONTAINER,
             ),
-            ft.Container(
-                col={"xs": 12, "sm": 4},
-                padding=16,
-                border_radius=12,
+            stat_card(
+                "新增 / 删除行",
+                f"+{total_insertions} / -{total_deletions}",
+                icon=ft.Icons.CODE,
                 bgcolor=ft.Colors.TERTIARY_CONTAINER,
-                content=ft.Column(
-                    spacing=4,
-                    controls=[
-                        ft.Text("新增 / 删除行", color=ft.Colors.ON_TERTIARY_CONTAINER),
-                        ft.Text(
-                            f"+{total_insertions} / -{total_deletions}",
-                            size=24,
-                            weight=ft.FontWeight.BOLD,
-                        ),
-                    ],
-                ),
+                fgcolor=ft.Colors.ON_TERTIARY_CONTAINER,
             ),
-            ft.Container(
-                col={"xs": 12, "sm": 4},
-                padding=16,
-                border_radius=12,
+            stat_card(
+                "变更文件数",
+                str(total_files),
+                icon=ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
                 bgcolor=ft.Colors.SECONDARY_CONTAINER,
-                content=ft.Column(
-                    spacing=4,
-                    controls=[
-                        ft.Text("变更文件数", color=ft.Colors.ON_SECONDARY_CONTAINER),
-                        ft.Text(str(total_files), size=28, weight=ft.FontWeight.BOLD),
-                    ],
-                ),
+                fgcolor=ft.Colors.ON_SECONDARY_CONTAINER,
             ),
         ],
     )
@@ -102,7 +89,7 @@ def ReportsView(projects: list[Project]):
         rows=[
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(project.name)),
+                    ft.DataCell(ft.Text(project.name, weight=ft.FontWeight.W_500)),
                     ft.DataCell(
                         ft.Text(
                             record.message,
@@ -112,55 +99,64 @@ def ReportsView(projects: list[Project]):
                         )
                     ),
                     ft.DataCell(ft.Text(format_datetime(record.committed_at))),
-                    ft.DataCell(ft.Text(f"+{record.insertions}", color=ft.Colors.GREEN_700)),
-                    ft.DataCell(ft.Text(f"-{record.deletions}", color=ft.Colors.RED_700)),
+                    ft.DataCell(
+                        ft.Text(
+                            f"+{record.insertions}",
+                            color=ft.Colors.GREEN_700,
+                            weight=ft.FontWeight.W_500,
+                        )
+                    ),
+                    ft.DataCell(
+                        ft.Text(
+                            f"-{record.deletions}",
+                            color=ft.Colors.RED_700,
+                            weight=ft.FontWeight.W_500,
+                        )
+                    ),
                     ft.DataCell(ft.Text(str(record.files_changed))),
                 ]
             )
             for record, project in records
         ],
-        heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
         border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
         border_radius=12,
     )
 
-    return ft.Container(
-        expand=True,
-        padding=24,
-        content=ft.Column(
+    return page_container(
+        ft.Column(
             expand=True,
-            spacing=16,
+            spacing=20,
             controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                     controls=[
-                        section_header("提交统计", "汇总各项目的提交内容与代码行数变化"),
-                        ft.Button(
-                            "统计" if not collecting else "统计中...",
+                        section_header(
+                            "提交统计", "汇总各项目的提交内容与代码行数变化"
+                        ),
+                        primary_button(
+                            "统计中..." if collecting else "统计",
                             icon=ft.Icons.ANALYTICS,
                             disabled=collecting or not projects,
                             on_click=lambda _: page.run_task(collect_statistics),
                         ),
                     ],
                 ),
-                ft.Row(
-                    controls=[
-                        ft.Dropdown(
-                            label="筛选项目",
-                            width=320,
-                            value=str(filter_id) if filter_id else "all",
-                            options=[
-                                ft.dropdown.Option("all", "全部项目"),
-                                *[
-                                    ft.dropdown.Option(str(item.id), item.name)
-                                    for item in projects
-                                ],
-                            ],
-                            on_select=lambda e: set_filter_id(
-                                None if e.control.value == "all" else int(e.control.value)
-                            ),
-                        ),
-                    ]
+                ft.Dropdown(
+                    label="筛选项目",
+                    width=320,
+                    border_radius=10,
+                    value=str(filter_id) if filter_id else "all",
+                    options=[
+                        ft.dropdown.Option("all", "全部项目"),
+                        *[
+                            ft.dropdown.Option(str(item.id), item.name)
+                            for item in projects
+                        ],
+                    ],
+                    on_select=lambda e: set_filter_id(
+                        None if e.control.value == "all" else int(e.control.value)
+                    ),
                 ),
                 summary_cards,
                 ft.ProgressRing(visible=loading)
@@ -171,14 +167,13 @@ def ReportsView(projects: list[Project]):
                     "添加项目后点击「统计」采集 Git 提交记录",
                 )
                 if not records
-                else ft.Container(
-                    expand=True,
-                    border_radius=12,
-                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-                    content=ft.ListView(
+                else surface_card(
+                    ft.ListView(
                         expand=True,
                         controls=[table],
                     ),
+                    padding=0,
+                    expand=True,
                 ),
             ],
         ),

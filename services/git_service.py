@@ -44,6 +44,12 @@ class GitService:
         return (Path(path) / ".gitignore").is_file()
 
     @classmethod
+    async def _has_local_changes(cls, repo_path: str) -> bool:
+        """git status 时有相关文件内容时，均视为存在本地变动。"""
+        result = await cls._run(repo_path, "status", "--porcelain")
+        return bool(result.stdout.strip())
+
+    @classmethod
     async def get_status(cls, repo_path: str) -> GitStatus:
         has_gitignore = cls.has_gitignore_file(repo_path)
         if not cls.is_git_repo(repo_path):
@@ -54,10 +60,10 @@ class GitService:
             )
 
         remote_result = await cls._run(repo_path, "remote")
-        status_result = await cls._run(repo_path, "status", "--porcelain")
+        has_local_changes = await cls._has_local_changes(repo_path)
         return GitStatus(
             has_remote=bool(remote_result.stdout.strip()),
-            has_local_changes=bool(status_result.stdout.strip()),
+            has_local_changes=has_local_changes,
             has_gitignore=has_gitignore,
         )
 

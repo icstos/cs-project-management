@@ -2,84 +2,99 @@ import flet as ft
 
 from models.database import Permission, Project
 from services.project_service import ProjectService
-from views.ui_helpers import empty_state, format_datetime, permission_badge, section_header, show_snack, status_chip
+from views.ui_helpers import (
+    danger_button,
+    empty_state,
+    format_datetime,
+    icon_action_button,
+    page_container,
+    permission_badge,
+    primary_button,
+    secondary_button,
+    section_header,
+    show_snack,
+    local_changes_chip,
+    status_chip,
+    surface_card,
+    text_button,
+)
 
 
 @ft.component
 def ProjectCard(project: Project, on_edit, on_delete, on_refresh):
-    return ft.Card(
-        key=f"project-{project.id}",
-        content=ft.Container(
-            padding=16,
-            content=ft.Column(
-                spacing=10,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Column(
-                                spacing=4,
-                                expand=True,
-                                controls=[
-                                    ft.Text(project.name, size=18, weight=ft.FontWeight.W_600),
-                                    ft.Text(
-                                        project.local_path,
-                                        size=12,
-                                        color=ft.Colors.ON_SURFACE_VARIANT,
-                                        max_lines=2,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
-                                    ),
-                                ],
-                            ),
-                            permission_badge(project.permission),
-                        ],
-                    ),
-                    ft.Row(
-                        spacing=8,
-                        controls=[
-                            status_chip("已配置远程", project.has_remote, ft.Colors.TEAL_700),
-                            status_chip(
-                                "本地有变更",
-                                project.has_local_changes,
-                                ft.Colors.ORANGE_700,
-                            ),
-                            status_chip(
-                                "含 .gitignore",
-                                project.has_gitignore,
-                                ft.Colors.INDIGO_700,
-                            ),
-                        ],
-                    ),
-                    ft.Text(
-                        f"更新于 {format_datetime(project.updated_at)}",
-                        size=11,
-                        color=ft.Colors.OUTLINE,
-                    ),
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.END,
-                        spacing=8,
-                        controls=[
-                            ft.IconButton(
-                                icon=ft.Icons.REFRESH,
-                                tooltip="刷新 Git 状态",
-                                on_click=lambda _: on_refresh(project),
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.EDIT,
-                                tooltip="编辑",
-                                on_click=lambda _: on_edit(project),
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                tooltip="删除",
-                                icon_color=ft.Colors.ERROR,
-                                on_click=lambda _: on_delete(project),
-                            ),
-                        ],
-                    ),
-                ],
-            ),
+    return surface_card(
+        ft.Column(
+            spacing=12,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Column(
+                            spacing=4,
+                            expand=True,
+                            controls=[
+                                ft.Text(
+                                    project.name,
+                                    size=18,
+                                    weight=ft.FontWeight.W_600,
+                                ),
+                                ft.Text(
+                                    project.local_path,
+                                    size=12,
+                                    color=ft.Colors.ON_SURFACE_VARIANT,
+                                    max_lines=2,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                            ],
+                        ),
+                        permission_badge(project.permission),
+                    ],
+                ),
+                ft.Row(
+                    spacing=8,
+                    wrap=True,
+                    run_spacing=8,
+                    controls=[
+                        status_chip("已配置远程", project.has_remote),
+                        local_changes_chip(project.has_local_changes),
+                        status_chip("含 .gitignore", project.has_gitignore),
+                    ],
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Text(
+                            f"更新于 {format_datetime(project.updated_at)}",
+                            size=11,
+                            color=ft.Colors.OUTLINE,
+                        ),
+                        ft.Row(
+                            spacing=4,
+                            controls=[
+                                icon_action_button(
+                                    ft.Icons.REFRESH,
+                                    "刷新 Git 状态",
+                                    lambda _: on_refresh(project),
+                                ),
+                                icon_action_button(
+                                    ft.Icons.EDIT_OUTLINED,
+                                    "编辑",
+                                    lambda _: on_edit(project),
+                                ),
+                                icon_action_button(
+                                    ft.Icons.DELETE_OUTLINE,
+                                    "删除",
+                                    lambda _: on_delete(project),
+                                    danger=True,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
         ),
+        key=f"project-{project.id}",
     )
 
 
@@ -169,7 +184,9 @@ def ProjectsView(on_projects_changed):
         try:
             updated = await ProjectService.refresh_git_status(project)
             set_projects(
-                lambda items: [updated if item.id == updated.id else item for item in items]
+                lambda items: [
+                    updated if item.id == updated.id else item for item in items
+                ]
             )
             show_snack(page, f"已刷新 {project.name}")
             await on_projects_changed(refresh_git=False)
@@ -183,7 +200,9 @@ def ProjectsView(on_projects_changed):
             return
         try:
             ProjectService.remove(deleting_project.id)
-            set_projects(lambda items: [item for item in items if item.id != deleting_project.id])
+            set_projects(
+                lambda items: [item for item in items if item.id != deleting_project.id]
+            )
             show_snack(page, "项目已删除")
             set_deleting_project(None)
             await on_projects_changed(refresh_git=False)
@@ -193,16 +212,18 @@ def ProjectsView(on_projects_changed):
     ft.use_dialog(
         ft.AlertDialog(
             modal=True,
+            shape=ft.RoundedRectangleBorder(radius=16),
             title=ft.Text("编辑项目" if editing else "添加项目"),
             content=ft.Container(
                 width=460,
                 content=ft.Column(
                     tight=True,
-                    spacing=12,
+                    spacing=14,
                     controls=[
                         ft.TextField(
                             label="项目名称",
                             value=name,
+                            border_radius=10,
                             on_change=lambda e: set_name(e.control.value),
                         ),
                         ft.Row(
@@ -213,8 +234,9 @@ def ProjectsView(on_projects_changed):
                                     value=local_path,
                                     expand=True,
                                     read_only=True,
+                                    border_radius=10,
                                 ),
-                                ft.Button(
+                                secondary_button(
                                     "浏览",
                                     icon=ft.Icons.FOLDER_OPEN,
                                     on_click=pick_directory,
@@ -224,6 +246,7 @@ def ProjectsView(on_projects_changed):
                         ft.Dropdown(
                             label="权限",
                             value=permission,
+                            border_radius=10,
                             options=[
                                 ft.dropdown.Option(
                                     Permission.PUBLIC.value, Permission.PUBLIC.label
@@ -238,8 +261,8 @@ def ProjectsView(on_projects_changed):
                 ),
             ),
             actions=[
-                ft.TextButton("取消", on_click=lambda _: set_dialog_mode(None)),
-                ft.Button(
+                text_button("取消", on_click=lambda _: set_dialog_mode(None)),
+                primary_button(
                     "保存中..." if saving else "保存",
                     icon=ft.Icons.SAVE,
                     disabled=saving,
@@ -254,38 +277,44 @@ def ProjectsView(on_projects_changed):
     ft.use_dialog(
         ft.AlertDialog(
             modal=True,
+            shape=ft.RoundedRectangleBorder(radius=16),
             title=ft.Text("确认删除"),
             content=ft.Text(f"确定删除项目「{deleting_project.name}」吗？"),
             actions=[
-                ft.TextButton("取消", on_click=lambda _: set_deleting_project(None)),
-                ft.Button("删除", on_click=confirm_delete),
+                text_button("取消", on_click=lambda _: set_deleting_project(None)),
+                danger_button(
+                    "删除", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_delete
+                ),
             ],
         )
         if deleting_project
         else None
     )
 
-    return ft.Container(
-        expand=True,
-        padding=24,
-        content=ft.Column(
+    return page_container(
+        ft.Column(
             expand=True,
-            spacing=16,
+            spacing=20,
             controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                     controls=[
-                        section_header("项目管理", "维护本地 Git 项目，自动检测远程配置与变更状态"),
+                        section_header(
+                            "项目管理", "维护本地 Git 项目，自动检测远程配置与变更状态"
+                        ),
                         ft.Row(
-                            spacing=8,
+                            spacing=10,
                             controls=[
-                                ft.Button(
+                                secondary_button(
                                     "刷新全部",
                                     icon=ft.Icons.SYNC,
                                     disabled=loading or refreshing,
-                                    on_click=lambda _: page.run_task(load_projects, True),
+                                    on_click=lambda _: page.run_task(
+                                        load_projects, True
+                                    ),
                                 ),
-                                ft.FilledButton(
+                                primary_button(
                                     "添加项目",
                                     icon=ft.Icons.ADD,
                                     on_click=lambda _: set_dialog_mode("create"),

@@ -25,9 +25,21 @@ def AppShell():
     ft.use_effect(bootstrap, [])
 
     destinations = [
-        ft.NavigationRailDestination(icon=ft.Icons.FOLDER, label="项目"),
-        ft.NavigationRailDestination(icon=ft.Icons.COMMIT, label="提交"),
-        ft.NavigationRailDestination(icon=ft.Icons.ANALYTICS, label="统计"),
+        ft.NavigationRailDestination(
+            icon=ft.Icons.FOLDER_OUTLINED,
+            selected_icon=ft.Icons.FOLDER,
+            label="项目",
+        ),
+        ft.NavigationRailDestination(
+            icon=ft.Icons.COMMIT_OUTLINED,
+            selected_icon=ft.Icons.COMMIT,
+            label="提交",
+        ),
+        ft.NavigationRailDestination(
+            icon=ft.Icons.ANALYTICS_OUTLINED,
+            selected_icon=ft.Icons.ANALYTICS,
+            label="统计",
+        ),
     ]
 
     content = [
@@ -39,16 +51,53 @@ def AppShell():
     return ft.Row(
         expand=True,
         controls=[
-            ft.NavigationRail(
-                selected_index=tab_index,
-                label_type=ft.NavigationRailLabelType.ALL,
-                min_width=88,
-                min_extended_width=160,
-                destinations=destinations,
-                on_change=lambda e: set_tab_index(e.control.selected_index),
+            ft.Container(
                 bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.Container(
+                            padding=ft.Padding.only(top=20, bottom=8),
+                            content=ft.Column(
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=4,
+                                controls=[
+                                    ft.Container(
+                                        width=44,
+                                        height=44,
+                                        border_radius=12,
+                                        bgcolor=ft.Colors.PRIMARY,
+                                        alignment=ft.Alignment.CENTER,
+                                        content=ft.Icon(
+                                            ft.Icons.CODE,
+                                            color=ft.Colors.ON_PRIMARY,
+                                            size=24,
+                                        ),
+                                    ),
+                                    ft.Text(
+                                        "CS PM",
+                                        size=11,
+                                        weight=ft.FontWeight.W_600,
+                                        color=ft.Colors.ON_SURFACE_VARIANT,
+                                    ),
+                                ],
+                            ),
+                        ),
+                        ft.NavigationRail(
+                            expand=True,
+                            selected_index=tab_index,
+                            label_type=ft.NavigationRailLabelType.ALL,
+                            min_width=88,
+                            min_extended_width=160,
+                            use_indicator=True,
+                            destinations=destinations,
+                            on_change=lambda e: set_tab_index(e.control.selected_index),
+                            bgcolor=ft.Colors.TRANSPARENT,
+                        ),
+                    ],
+                ),
             ),
-            ft.VerticalDivider(width=1),
+            ft.VerticalDivider(width=1, color=ft.Colors.OUTLINE_VARIANT),
             ft.Container(expand=True, content=content),
         ],
     )
