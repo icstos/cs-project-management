@@ -101,6 +101,7 @@ class ProjectService:
                     continue
                 stored.has_remote = status.has_remote
                 stored.has_local_changes = status.has_local_changes
+                stored.has_gitignore = status.has_gitignore
                 updated.append(save_project(session, stored))
         return updated
 
@@ -112,6 +113,7 @@ class ProjectService:
                 raise ValueError("项目不存在")
             project.has_remote = status.has_remote
             project.has_local_changes = status.has_local_changes
+            project.has_gitignore = status.has_gitignore
             return save_project(session, project)
 
     @staticmethod

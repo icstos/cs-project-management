@@ -10,6 +10,7 @@ from models.database import CommitRecord
 class GitStatus:
     has_remote: bool
     has_local_changes: bool
+    has_gitignore: bool
 
 
 @dataclass(frozen=True)
@@ -38,16 +39,26 @@ class GitService:
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
         return GitCommandResult(proc.returncode == 0, stdout, stderr)
 
+    @staticmethod
+    def has_gitignore_file(path: str) -> bool:
+        return (Path(path) / ".gitignore").is_file()
+
     @classmethod
     async def get_status(cls, repo_path: str) -> GitStatus:
+        has_gitignore = cls.has_gitignore_file(repo_path)
         if not cls.is_git_repo(repo_path):
-            return GitStatus(has_remote=False, has_local_changes=False)
+            return GitStatus(
+                has_remote=False,
+                has_local_changes=False,
+                has_gitignore=has_gitignore,
+            )
 
         remote_result = await cls._run(repo_path, "remote")
         status_result = await cls._run(repo_path, "status", "--porcelain")
         return GitStatus(
             has_remote=bool(remote_result.stdout.strip()),
             has_local_changes=bool(status_result.stdout.strip()),
+            has_gitignore=has_gitignore,
         )
 
     @classmethod

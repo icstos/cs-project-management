@@ -43,6 +43,11 @@ def ProjectCard(project: Project, on_edit, on_delete, on_refresh):
                                 project.has_local_changes,
                                 ft.Colors.ORANGE_700,
                             ),
+                            status_chip(
+                                "含 .gitignore",
+                                project.has_gitignore,
+                                ft.Colors.INDIGO_700,
+                            ),
                         ],
                     ),
                     ft.Text(

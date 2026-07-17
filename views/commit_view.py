@@ -98,6 +98,11 @@ def CommitView(projects: list[Project], on_projects_changed):
                                                     selected.has_local_changes if selected else False,
                                                     ft.Colors.ORANGE_700,
                                                 ),
+                                                status_chip(
+                                                    "含 .gitignore",
+                                                    selected.has_gitignore if selected else False,
+                                                    ft.Colors.INDIGO_700,
+                                                ),
                                             ],
                                         ),
                                     ],

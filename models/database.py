@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlalchemy import inspect, text
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DATA_DIR / "app.db"
@@ -24,6 +25,7 @@ class Project(SQLModel, table=True):
     local_path: str = Field(unique=True, index=True)
     has_remote: bool = False
     has_local_changes: bool = False
+    has_gitignore: bool = False
     permission: str = Field(default=Permission.PRIVATE.value)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -53,6 +55,21 @@ engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    _migrate_schema()
+
+
+def _migrate_schema() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("project"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("project")}
+    if "has_gitignore" not in columns:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE project ADD COLUMN has_gitignore BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
 
 
 def get_session() -> Generator[Session, None, None]:
