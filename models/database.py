@@ -73,12 +73,12 @@ def _migrate_schema() -> None:
 
 
 def get_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         yield session
 
 
 def session_scope() -> Session:
-    return Session(engine)
+    return Session(engine, expire_on_commit=False)
 
 
 def list_projects(session: Session) -> list[Project]:

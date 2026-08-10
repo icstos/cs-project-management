@@ -81,7 +81,13 @@ class ProjectService:
 
     @staticmethod
     async def refresh_git_status(project: Project) -> Project:
-        status = await GitService.get_status(project.local_path)
+        with session_scope() as session:
+            stored = get_project(session, project.id)
+            if not stored:
+                raise ValueError("项目不存在")
+            repo_path = stored.local_path
+
+        status = await GitService.get_status(repo_path)
         return ProjectService._apply_status(project.id, status)
 
     @staticmethod
