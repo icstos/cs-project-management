@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs-project-management"
+version = "0.1.0"
+description = "CS 项目管理桌面应用（Flet + SQLModel）"
+requires-python = ">=3.10"
+dependencies = [
+    "flet==0.86.5",
+    "sqlmodel>=0.0.22",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+include = ["models*", "services*", "views*"]
