@@ -3,11 +3,14 @@
 # custom path
 output
 docs
-
+.workbuddy
 # custom file
 *.pt
 *.log
 *.db
+# SQLite WAL 模式的运行时副产品
+*.db-shm
+*.db-wal
 
 # pyenv
 .python-version

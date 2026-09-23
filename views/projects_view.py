@@ -1,349 +1,597 @@
+"""项目管理视图：搜索、筛选、排序与增删改。
+
+数据来自 AppShell（单一数据源），本视图只负责展示与上报意图；
+表单弹窗用 ``ft.use_dialog`` 承载，内容随草稿状态实时刷新。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from enum import StrEnum
+
 import flet as ft
 
-from models.database import Permission, Project
+from core import shell
+from core import theme as T
+from models.dto import Project
 from services.project_service import ProjectService
-from views.ui_helpers import (
-    danger_button,
-    empty_state,
-    format_datetime,
-    icon_action_button,
-    page_container,
-    permission_badge,
-    primary_button,
-    secondary_button,
-    section_header,
-    show_snack,
-    local_changes_chip,
-    status_chip,
-    surface_card,
-    text_button,
-)
+from views import ui
+from views.dialogs import ProjectDraft, delete_project_dialog, project_form_dialog
+from views.guard import guarded
+
+CARD_COL = {"xs": 12, "md": 6, "xl": 4}
 
 
-@ft.component
-def ProjectCard(project: Project, on_edit, on_delete, on_refresh):
-    return surface_card(
-        ft.Column(
-            spacing=12,
+class ProjectFilter(StrEnum):
+    ALL = "all"
+    DIRTY = "dirty"
+    ATTENTION = "attention"
+
+    @property
+    def label(self) -> str:
+        match self:
+            case ProjectFilter.DIRTY:
+                return "有本地变更"
+            case ProjectFilter.ATTENTION:
+                return "需关注"
+            case _:
+                return "全部"
+
+
+class SortKey(StrEnum):
+    NAME = "name"
+    UPDATED = "updated"
+    DIRTY = "dirty"
+
+    @property
+    def label(self) -> str:
+        match self:
+            case SortKey.UPDATED:
+                return "最近更新"
+            case SortKey.DIRTY:
+                return "待提交文件"
+            case _:
+                return "名称"
+
+
+@guarded
+def ProjectsView(
+    *,
+    projects: list[Project],
+    service: ProjectService,
+    picker: ft.FilePicker,
+    busy: bool,
+    new_request: int,
+    refresh: Callable[..., object],
+):
+    page = ft.context.page
+    clipboard = ft.use_ref(ft.Clipboard).current
+
+    query, set_query = ft.use_state("")
+    active_filter, set_filter = ft.use_state(ProjectFilter.ALL)
+    sort_key, set_sort = ft.use_state(SortKey.NAME)
+    draft, set_draft = ft.use_state(None)
+    form_error, set_form_error = ft.use_state(None)
+    saving, set_saving = ft.use_state(False)
+    pending_delete, set_pending_delete = ft.use_state(None)
+    busy_project, set_busy_project = ft.use_state(None)
+
+    # 搜索框是受控输入：文本的唯一真相是 query 状态。
+    # 不要在渲染后回写控件属性（已下发的控件会被标记为 frozen 并抛异常），
+    # 清空搜索只需 set_query("")。
+    visible = ft.use_memo(
+        lambda: _shape(projects, query, active_filter, sort_key),
+        [projects, query, active_filter, sort_key],
+    )
+
+    # ------------------------------------------------------------------ 表单
+    def open_create() -> None:
+        set_form_error(None)
+        set_draft(ProjectDraft.blank())
+
+    def open_edit(project: Project) -> None:
+        set_form_error(None)
+        set_draft(ProjectDraft.from_project(project))
+
+    def close_form() -> None:
+        set_draft(None)
+        set_form_error(None)
+
+    def open_new_on_request() -> None:
+        if new_request:
+            open_create()
+
+    ft.use_effect(open_new_on_request, [new_request])
+
+    def change_draft(**changes: object) -> None:
+        set_draft(lambda current: current.with_fields(**changes) if current else current)
+
+    async def pick_directory(_) -> None:
+        selected = await picker.get_directory_path(dialog_title="选择 Git 仓库目录")
+        if selected:
+            change_draft(local_path=selected)
+            set_form_error(None)
+
+    async def save(_) -> None:
+        if draft is None:
+            return
+        set_saving(True)
+        set_form_error(None)
+        try:
+            if draft.is_edit:
+                await service.update(
+                    draft.project_id,
+                    name=draft.name,
+                    local_path=draft.local_path,
+                    permission=draft.permission,
+                )
+                ui.toast(page, "项目已更新")
+            else:
+                await service.create(
+                    name=draft.name,
+                    local_path=draft.local_path,
+                    permission=draft.permission,
+                )
+                ui.toast(page, "项目已添加")
+            close_form()
+            await refresh()
+        except (ValueError, RuntimeError) as exc:
+            set_form_error(str(exc))
+        finally:
+            set_saving(False)
+
+    async def confirm_delete(_) -> None:
+        project = pending_delete
+        if project is None:
+            return
+        try:
+            await service.delete(project.id)
+            set_pending_delete(None)
+            ui.toast(page, f"已移除「{project.name}」")
+            await refresh()
+        except (ValueError, RuntimeError) as exc:
+            set_pending_delete(None)
+            ui.toast(page, str(exc), tone=T.Tone.DANGER)
+
+    # ------------------------------------------------------------------ 单项操作
+    async def refresh_one(project: Project) -> None:
+        set_busy_project(project.id)
+        try:
+            await service.refresh(project.id)
+            await refresh()
+        except (ValueError, RuntimeError) as exc:
+            ui.toast(page, str(exc), tone=T.Tone.DANGER)
+        finally:
+            set_busy_project(None)
+
+    def open_in_explorer(project: Project) -> None:
+        ok, reason = shell.reveal(project.local_path)
+        if not ok:
+            ui.toast(page, reason, tone=T.Tone.DANGER)
+
+    def copy_path(project: Project) -> None:
+        try:
+            clipboard.set(project.local_path)
+            ui.toast(page, "路径已复制到剪贴板", tone=T.Tone.INFO)
+        except Exception as exc:
+            ui.toast(page, f"复制失败：{exc}", tone=T.Tone.DANGER)
+
+    def clear_search(_=None) -> None:
+        set_query("")
+
+    # ------------------------------------------------------------------ 弹窗
+    ft.use_dialog(
+        project_form_dialog(
+            draft=draft,
+            error=form_error,
+            saving=saving,
+            on_change=change_draft,
+            on_pick_path=pick_directory,
+            on_cancel=close_form,
+            on_save=save,
+        )
+        if draft is not None
+        else None
+    )
+    ft.use_dialog(
+        delete_project_dialog(
+            project=pending_delete,
+            on_confirm=confirm_delete,
+            on_cancel=lambda _: set_pending_delete(None),
+        )
+        if pending_delete is not None
+        else None
+    )
+
+    return ui.page_shell(
+        header=ui.page_header(
+            "项目管理",
+            "维护本地 Git 仓库台账，自动探测远程配置、分支与变更状态",
+            actions=[
+                ui.outlined(
+                    "刷新状态",
+                    icon=ft.Icons.SYNC,
+                    disabled=busy,
+                    on_click=lambda _: page.run_task(refresh, True),
+                ),
+                ui.filled("添加项目", icon=ft.Icons.ADD, on_click=lambda _: open_create()),
+            ],
+        ),
+        body=ft.Column(
+            expand=True,
+            spacing=T.SPACE_MD,
+            controls=[
+                _toolbar(
+                    query=query,
+                    on_query=set_query,
+                    on_clear=clear_search,
+                    active=active_filter,
+                    on_filter=set_filter,
+                    sort_key=sort_key,
+                    on_sort=set_sort,
+                    projects=projects,
+                    matched=len(visible),
+                ),
+                _body(
+                    page=page,
+                    projects=projects,
+                    visible=visible,
+                    busy=busy,
+                    busy_project=busy_project,
+                    on_create=open_create,
+                    on_edit=open_edit,
+                    on_delete=set_pending_delete,
+                    on_refresh=refresh_one,
+                    on_reveal=open_in_explorer,
+                    on_copy=copy_path,
+                ),
+            ],
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- 构件
+def _toolbar(
+    *,
+    query: str,
+    on_query,
+    on_clear,
+    active: ProjectFilter,
+    on_filter,
+    sort_key: SortKey,
+    on_sort,
+    projects: list[Project],
+    matched: int,
+) -> ft.Control:
+    counts = {
+        ProjectFilter.ALL: len(projects),
+        ProjectFilter.DIRTY: sum(1 for p in projects if p.has_local_changes),
+        ProjectFilter.ATTENTION: sum(1 for p in projects if p.warnings),
+    }
+    # 注意：Row(wrap=True) 的子项不能带 expand（Flutter 会因父数据不匹配而报错），
+    # 所以把「需要吃掉剩余宽度」的元素放在不换行的第一行。
+    return ft.Column(
+        spacing=T.SPACE_SM,
+        tight=True,
+        controls=[
+            ft.Row(
+                spacing=T.SPACE_SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        width=300,
+                        content=ft.TextField(
+                            key="project-search",
+                            hint_text="搜索名称或路径",
+                            prefix_icon=ft.Icons.SEARCH,
+                            value=query,
+                            border=T.field_border(),
+                            dense=True,
+                            expand=True,
+                            on_change=lambda e: on_query(ui.event_value(e) or ""),
+                        ),
+                    ),
+                    *(
+                        [
+                            ft.IconButton(
+                                icon=ft.Icons.CLOSE,
+                                tooltip="清空搜索",
+                                icon_size=18,
+                                on_click=on_clear,
+                            )
+                        ]
+                        if query
+                        else []
+                    ),
+                    ft.Container(expand=True),
+                    ft.Text(
+                        f"显示 {matched}/{len(projects)} 个"
+                        if query or active is not ProjectFilter.ALL
+                        else f"共 {len(projects)} 个项目",
+                        size=11,
+                        color=T.MUTED_TEXT,
+                    ),
+                    ft.Dropdown(
+                        width=150,
+                        value=sort_key.value,
+                        dense=True,
+                        border=T.field_border(),
+                        options=[ft.dropdown.Option(item.value, item.label) for item in SortKey],
+                        on_select=lambda e: on_sort(SortKey(ui.event_value(e))),
+                    ),
+                ],
+            ),
+            ft.Row(
+                spacing=T.SPACE_SM,
+                run_spacing=T.SPACE_SM,
+                wrap=True,
+                controls=[
+                    ft.Chip(
+                        label=ft.Text(f"{item.label} {counts[item]}"),
+                        selected=active is item,
+                        show_checkmark=False,
+                        on_select=lambda _, target=item: on_filter(target),
+                    )
+                    for item in ProjectFilter
+                ],
+            ),
+        ],
+    )
+
+
+def _body(
+    *,
+    page: ft.Page,
+    projects: list[Project],
+    visible: list[Project],
+    busy: bool,
+    busy_project: int | None,
+    on_create,
+    on_edit,
+    on_delete,
+    on_refresh,
+    on_reveal,
+    on_copy,
+) -> ft.Control:
+    if busy and not projects:
+        return ui.busy_block("正在读取项目列表…")
+    if not projects:
+        return ui.empty_state(
+            ft.Icons.FOLDER_OFF,
+            "还没有项目",
+            "添加一个本地 Git 仓库，开始跟踪分支、变更与提交统计",
+            action=ui.filled("添加项目", icon=ft.Icons.ADD, on_click=lambda _: on_create()),
+        )
+    if not visible:
+        return ui.empty_state(
+            ft.Icons.SEARCH_OFF,
+            "没有匹配的项目",
+            "换个关键词，或把筛选条件切回「全部」",
+        )
+
+    return ft.Column(
+        expand=True,
+        scroll=ft.ScrollMode.AUTO,
+        spacing=T.SPACE_MD,
+        controls=[
+            ft.ResponsiveRow(
+                spacing=T.SPACE_MD,
+                run_spacing=T.SPACE_MD,
+                controls=[
+                    _project_card(
+                        project,
+                        refreshing=busy_project == project.id,
+                        on_edit=on_edit,
+                        on_delete=on_delete,
+                        on_refresh=lambda p: page.run_task(on_refresh, p),
+                        on_reveal=on_reveal,
+                        on_copy=on_copy,
+                    )
+                    for project in visible
+                ],
+            )
+        ],
+    )
+
+
+def _project_card(
+    project: Project,
+    *,
+    refreshing: bool,
+    on_edit,
+    on_delete,
+    on_refresh,
+    on_reveal,
+    on_copy,
+) -> ft.Container:
+    warnings = project.warnings
+    dirty_text = f"{project.changed_files} 个文件待提交" if project.changed_files else "工作区干净"
+
+    return ui.surface(
+        col=CARD_COL,
+        key=f"project-{project.id}",
+        content=ft.Column(
+            spacing=T.SPACE_SM,
+            tight=True,
             controls=[
                 ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    spacing=T.SPACE_SM,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                     controls=[
                         ft.Column(
-                            spacing=4,
+                            spacing=T.SPACE_XXS,
+                            tight=True,
                             expand=True,
                             controls=[
                                 ft.Text(
                                     project.name,
-                                    size=18,
+                                    size=16,
                                     weight=ft.FontWeight.W_600,
-                                ),
-                                ft.Text(
-                                    project.local_path,
-                                    size=12,
-                                    color=ft.Colors.ON_SURFACE_VARIANT,
-                                    max_lines=2,
+                                    max_lines=1,
                                     overflow=ft.TextOverflow.ELLIPSIS,
                                 ),
+                                ui.muted(project.local_path, size=11, max_lines=1),
                             ],
                         ),
-                        permission_badge(project.permission),
+                        ui.permission_pill(project.permission),
                     ],
                 ),
                 ft.Row(
-                    spacing=8,
+                    spacing=T.SPACE_SM,
                     wrap=True,
-                    run_spacing=8,
+                    run_spacing=T.SPACE_SM,
                     controls=[
-                        status_chip("已配置远程", project.has_remote),
-                        local_changes_chip(project.has_local_changes),
-                        status_chip("含 .gitignore", project.has_gitignore),
+                        *(
+                            [ui.pill(project.branch, icon=ft.Icons.ALT_ROUTE, dense=True)]
+                            if project.branch
+                            else []
+                        ),
+                        ui.flag_pill("已配置远程", project.has_remote),
+                        ui.flag_pill("工作区干净", project.is_clean),
+                        ui.flag_pill("含 .gitignore", project.has_gitignore),
+                        *(
+                            [
+                                ui.pill(
+                                    f"{project.ahead} 个提交待推送",
+                                    tone=T.Tone.INFO,
+                                    icon=ft.Icons.UPLOAD,
+                                    dense=True,
+                                )
+                            ]
+                            if project.ahead
+                            else []
+                        ),
+                        *(
+                            [
+                                ui.pill(
+                                    f"{project.behind} 个提交待拉取",
+                                    tone=T.Tone.WARNING,
+                                    icon=ft.Icons.DOWNLOAD,
+                                    dense=True,
+                                )
+                            ]
+                            if project.behind
+                            else []
+                        ),
                     ],
                 ),
+                *(
+                    [
+                        ui.flat_panel(
+                            ui.hint_row(
+                                ft.Icons.WARNING_AMBER_ROUNDED,
+                                "；".join(warnings),
+                                tone=T.Tone.WARNING,
+                            ),
+                            padding=T.SPACE_SM,
+                        )
+                    ]
+                    if warnings
+                    else []
+                ),
+                ui.divider(),
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Text(
-                            f"更新于 {format_datetime(project.updated_at)}",
-                            size=11,
-                            color=ft.Colors.OUTLINE,
-                        ),
-                        ft.Row(
-                            spacing=4,
+                        ft.Column(
+                            spacing=0,
+                            tight=True,
                             controls=[
-                                icon_action_button(
-                                    ft.Icons.REFRESH,
-                                    "刷新 Git 状态",
-                                    lambda _: on_refresh(project),
-                                ),
-                                icon_action_button(
-                                    ft.Icons.EDIT_OUTLINED,
-                                    "编辑",
-                                    lambda _: on_edit(project),
-                                ),
-                                icon_action_button(
-                                    ft.Icons.DELETE_OUTLINE,
-                                    "删除",
-                                    lambda _: on_delete(project),
-                                    danger=True,
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        ),
-        key=f"project-{project.id}",
-    )
-
-
-@ft.component
-def ProjectsView(on_projects_changed):
-    page = ft.context.page
-    projects, set_projects = ft.use_state([])
-    loading, set_loading = ft.use_state(True)
-    refreshing, set_refreshing = ft.use_state(False)
-    dialog_mode, set_dialog_mode = ft.use_state(None)
-    deleting_project, set_deleting_project = ft.use_state(None)
-
-    name, set_name = ft.use_state("")
-    local_path, set_local_path = ft.use_state("")
-    permission, set_permission = ft.use_state(Permission.PRIVATE.value)
-    saving, set_saving = ft.use_state(False)
-
-    editing = dialog_mode if isinstance(dialog_mode, Project) else None
-    form_open = dialog_mode is not None
-
-    def sync_form_from_mode():
-        if dialog_mode == "create":
-            set_name("")
-            set_local_path("")
-            set_permission(Permission.PRIVATE.value)
-        elif isinstance(dialog_mode, Project):
-            set_name(dialog_mode.name)
-            set_local_path(dialog_mode.local_path)
-            set_permission(dialog_mode.permission)
-
-    ft.use_effect(sync_form_from_mode, [dialog_mode])
-
-    async def load_projects(refresh_git: bool = True):
-        set_loading(True)
-        try:
-            if refresh_git:
-                updated = await ProjectService.refresh_all_git_status()
-                set_projects(updated)
-            else:
-                set_projects(ProjectService.get_all())
-        except Exception as exc:
-            set_projects(ProjectService.get_all())
-            show_snack(page, f"刷新状态失败: {exc}", error=True)
-        finally:
-            set_loading(False)
-            await on_projects_changed(refresh_git=False)
-
-    def bootstrap():
-        page.run_task(load_projects)
-
-    ft.use_effect(bootstrap, [])
-
-    async def pick_directory(_):
-        picker = ft.FilePicker()
-        page.services.append(picker)
-        page.update()
-        selected = await picker.get_directory_path(dialog_title="选择项目目录")
-        if selected:
-            set_local_path(selected)
-
-    async def handle_save(_):
-        if not name.strip():
-            show_snack(page, "请填写项目名称", error=True)
-            return
-        if not local_path.strip():
-            show_snack(page, "请选择本地路径", error=True)
-            return
-
-        set_saving(True)
-        try:
-            perm = Permission(permission)
-            if editing:
-                ProjectService.update(editing.id, name, local_path, perm)
-                show_snack(page, "项目已更新")
-            else:
-                ProjectService.create(name, local_path, perm)
-                show_snack(page, "项目已添加")
-            await load_projects()
-            set_dialog_mode(None)
-        except Exception as exc:
-            show_snack(page, str(exc), error=True)
-        finally:
-            set_saving(False)
-
-    async def refresh_one(project: Project):
-        set_refreshing(True)
-        try:
-            updated = await ProjectService.refresh_git_status(project)
-            set_projects(
-                lambda items: [
-                    updated if item.id == updated.id else item for item in items
-                ]
-            )
-            show_snack(page, f"已刷新 {project.name}")
-            await on_projects_changed(refresh_git=False)
-        except Exception as exc:
-            show_snack(page, str(exc), error=True)
-        finally:
-            set_refreshing(False)
-
-    async def confirm_delete(_):
-        if not deleting_project:
-            return
-        try:
-            ProjectService.remove(deleting_project.id)
-            set_projects(
-                lambda items: [item for item in items if item.id != deleting_project.id]
-            )
-            show_snack(page, "项目已删除")
-            set_deleting_project(None)
-            await on_projects_changed(refresh_git=False)
-        except Exception as exc:
-            show_snack(page, str(exc), error=True)
-
-    ft.use_dialog(
-        ft.AlertDialog(
-            modal=True,
-            shape=ft.RoundedRectangleBorder(radius=16),
-            title=ft.Text("编辑项目" if editing else "添加项目"),
-            content=ft.Container(
-                width=460,
-                content=ft.Column(
-                    tight=True,
-                    spacing=14,
-                    controls=[
-                        ft.TextField(
-                            label="项目名称",
-                            value=name,
-                            border_radius=10,
-                            on_change=lambda e: set_name(e.control.value),
-                        ),
-                        ft.Row(
-                            spacing=8,
-                            controls=[
-                                ft.TextField(
-                                    label="本地路径",
-                                    value=local_path,
-                                    expand=True,
-                                    read_only=True,
-                                    border_radius=10,
-                                ),
-                                secondary_button(
-                                    "浏览",
-                                    icon=ft.Icons.FOLDER_OPEN,
-                                    on_click=pick_directory,
-                                ),
-                            ],
-                        ),
-                        ft.Dropdown(
-                            label="权限",
-                            value=permission,
-                            border_radius=10,
-                            options=[
-                                ft.dropdown.Option(
-                                    Permission.PUBLIC.value, Permission.PUBLIC.label
-                                ),
-                                ft.dropdown.Option(
-                                    Permission.PRIVATE.value, Permission.PRIVATE.label
-                                ),
-                            ],
-                            on_select=lambda e: set_permission(e.control.value),
-                        ),
-                    ],
-                ),
-            ),
-            actions=[
-                text_button("取消", on_click=lambda _: set_dialog_mode(None)),
-                primary_button(
-                    "保存中..." if saving else "保存",
-                    icon=ft.Icons.SAVE,
-                    disabled=saving,
-                    on_click=handle_save,
-                ),
-            ],
-        )
-        if form_open
-        else None
-    )
-
-    ft.use_dialog(
-        ft.AlertDialog(
-            modal=True,
-            shape=ft.RoundedRectangleBorder(radius=16),
-            title=ft.Text("确认删除"),
-            content=ft.Text(f"确定删除项目「{deleting_project.name}」吗？"),
-            actions=[
-                text_button("取消", on_click=lambda _: set_deleting_project(None)),
-                danger_button(
-                    "删除", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_delete
-                ),
-            ],
-        )
-        if deleting_project
-        else None
-    )
-
-    return page_container(
-        ft.Column(
-            expand=True,
-            spacing=20,
-            controls=[
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
-                    controls=[
-                        section_header(
-                            "项目管理", "维护本地 Git 项目，自动检测远程配置与变更状态"
-                        ),
-                        ft.Row(
-                            spacing=10,
-                            controls=[
-                                secondary_button(
-                                    "刷新全部",
-                                    icon=ft.Icons.SYNC,
-                                    disabled=loading or refreshing,
-                                    on_click=lambda _: page.run_task(
-                                        load_projects, True
+                                ft.Text(
+                                    dirty_text,
+                                    size=12,
+                                    color=(
+                                        T.tone_style(T.Tone.WARNING).accent
+                                        if project.changed_files
+                                        else T.MUTED_TEXT
                                     ),
                                 ),
-                                primary_button(
-                                    "添加项目",
-                                    icon=ft.Icons.ADD,
-                                    on_click=lambda _: set_dialog_mode("create"),
+                                ui.muted(
+                                    f"更新于 {ui.format_relative(project.updated_at)}", size=11
+                                ),
+                            ],
+                        ),
+                        ft.Row(
+                            spacing=0,
+                            tight=True,
+                            controls=[
+                                ft.ProgressRing(width=16, height=16, stroke_width=2)
+                                if refreshing
+                                else ui.icon_action(
+                                    ft.Icons.REFRESH,
+                                    "刷新该仓库状态",
+                                    on_refresh,
+                                ),
+                                ui.icon_action(
+                                    ft.Icons.EDIT_OUTLINED,
+                                    "编辑",
+                                    lambda _, p=project: on_edit(p),
+                                ),
+                                ft.PopupMenuButton(
+                                    tooltip="更多操作",
+                                    items=[
+                                        ft.PopupMenuItem(
+                                            content=ft.Text("在文件管理器中打开"),
+                                            icon=ft.Icons.FOLDER_OPEN,
+                                            on_click=lambda _, p=project: on_reveal(p),
+                                        ),
+                                        ft.PopupMenuItem(
+                                            content=ft.Text("复制本地路径"),
+                                            icon=ft.Icons.CONTENT_COPY,
+                                            on_click=lambda _, p=project: on_copy(p),
+                                        ),
+                                    ],
+                                ),
+                                ui.icon_action(
+                                    ft.Icons.DELETE_OUTLINE,
+                                    "移除",
+                                    lambda _, p=project: on_delete(p),
+                                    tone=T.Tone.DANGER,
                                 ),
                             ],
                         ),
                     ],
                 ),
-                ft.ProgressRing(visible=loading)
-                if loading
-                else empty_state(
-                    ft.Icons.FOLDER_OFF,
-                    "暂无项目",
-                    "点击「添加项目」开始管理你的 Git 仓库",
-                )
-                if not loading and not projects
-                else ft.ListView(
-                    expand=True,
-                    spacing=12,
-                    controls=[
-                        ProjectCard(
-                            project=project,
-                            on_edit=lambda p: set_dialog_mode(p),
-                            on_delete=lambda p: set_deleting_project(p),
-                            on_refresh=lambda p: page.run_task(refresh_one, p),
-                        )
-                        for project in projects
-                    ],
-                ),
             ],
         ),
     )
+
+
+# --------------------------------------------------------------------------- 纯函数
+def _shape(
+    projects: list[Project],
+    query: str,
+    active: ProjectFilter,
+    sort_key: SortKey,
+) -> list[Project]:
+    """过滤 + 排序，逻辑与界面解耦，便于单独验证。"""
+    keyword = query.strip().casefold()
+    matched = [project for project in projects if _matches(project, keyword, active)]
+    match sort_key:
+        case SortKey.UPDATED:
+            matched.sort(key=lambda p: p.updated_at, reverse=True)
+        case SortKey.DIRTY:
+            matched.sort(key=lambda p: (p.changed_files, p.name), reverse=True)
+        case _:
+            matched.sort(key=lambda p: p.name.casefold())
+    return matched
+
+
+def _matches(project: Project, keyword: str, active: ProjectFilter) -> bool:
+    if (
+        keyword
+        and keyword not in project.name.casefold()
+        and keyword not in project.local_path.casefold()
+    ):
+        return False
+    match active:
+        case ProjectFilter.DIRTY:
+            return project.has_local_changes
+        case ProjectFilter.ATTENTION:
+            return bool(project.warnings)
+        case _:
+            return True
+
+
+__all__ = ["ProjectFilter", "ProjectsView", "SortKey"]

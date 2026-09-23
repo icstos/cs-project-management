@@ -4,18 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cs-project-management"
-version = "0.1.0"
-description = "CS 项目管理桌面应用（Flet + SQLModel）"
-requires-python = ">=3.10"
+version = "1.0.0"
+description = "CS 项目管理桌面应用：本地 Git 项目的台账、提交与统计"
+requires-python = ">=3.12"
 dependencies = [
-    "flet==1.0.0",
-    "sqlmodel>=0.0.22",
+    "flet==1.0.1",
+    "flet-charts==1.0.0",
+    "sqlmodel>=0.0.39",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
+    "ruff>=0.6",
 ]
 
+[project.scripts]
+cs-pm = "main:run"
+
+[tool.setuptools]
+py-modules = ["main"]
+
 [tool.setuptools.packages.find]
-include = ["models*", "services*", "views*"]
+include = ["core*", "models*", "repositories*", "services*", "views*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+# 界面文案使用中文全角标点，不需要按 ASCII 规则提示
+ignore = ["RUF001", "RUF002", "RUF003"]

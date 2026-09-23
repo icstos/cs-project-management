@@ -1,173 +1,340 @@
-import asyncio
+"""项目业务编排。
+
+对外只暴露异步方法并返回 DTO，内部统一做三件事：
+
+1. 校验用户输入（名称、路径、是否 Git 仓库、是否重复）；
+2. 把阻塞的 SQLite 访问丢进线程池；
+3. 把多次 git 探测按并发上限并行执行，最后一次性落库。
+"""
+
+from __future__ import annotations
+
+import itertools
+from collections.abc import Callable, Sequence
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from models.database import (
-    CommitRecord,
+from core.config import (
+    GIT_CONCURRENCY,
+    GIT_HISTORY_LIMIT,
+    REPORT_ROW_LIMIT,
+    TREND_DAYS_DEFAULT,
+    TREND_DAYS_MAX,
+)
+from core.tasks import gather_limited, offload
+from models.database import session_scope
+from models.dto import (
+    Commit,
+    CommitOutcome,
+    CommitRow,
+    GitStatus,
     Permission,
     Project,
-    delete_project,
-    get_project,
-    get_project_by_path,
-    list_commit_records,
-    list_projects,
-    save_project,
-    session_scope,
-    upsert_commit_records,
+    ProjectTotals,
+    Report,
+    SyncOutcome,
+    Totals,
+    TrendPoint,
 )
-from services.git_service import GitService, GitStatus
+from repositories import commit_repo, project_repo
+from services.git_service import GitError, GitService
+
+Progress = Callable[[int, int], None]
+_UNKNOWN_PROJECT = "已删除项目"
 
 
 class ProjectService:
-    @staticmethod
-    def get_all() -> list[Project]:
-        with session_scope() as session:
-            return list_projects(session)
+    def __init__(self, git: GitService | None = None) -> None:
+        self._git = git or GitService()
 
-    @staticmethod
-    def get(project_id: int) -> Project | None:
-        with session_scope() as session:
-            return get_project(session, project_id)
+    # ------------------------------------------------------------------ 只读
+    async def list_projects(self) -> list[Project]:
+        return await offload(self._load_projects)
 
-    @staticmethod
-    def create(name: str, local_path: str, permission: Permission) -> Project:
-        resolved = str(Path(local_path).resolve())
-        if not Path(resolved).is_dir():
-            raise ValueError("本地路径不存在")
-        if not GitService.is_git_repo(resolved):
-            raise ValueError("所选路径不是 Git 仓库")
+    async def get(self, project_id: int) -> Project:
+        project = await offload(self._load_project, project_id)
+        if project is None:
+            raise ValueError("项目不存在或已被删除")
+        return project
 
+    async def git_available(self) -> bool:
+        return await self._git.is_available()
+
+    # ------------------------------------------------------------------ 维护
+    async def create(self, *, name: str, local_path: str, permission: Permission) -> Project:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("项目名称不能为空")
+        resolved = self._resolve_repo(local_path)
+
+        project = await offload(self._insert, clean_name, resolved, permission)
+        return await self.refresh(project.id)
+
+    async def update(
+        self,
+        project_id: int,
+        *,
+        name: str,
+        local_path: str,
+        permission: Permission,
+    ) -> Project:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("项目名称不能为空")
+        resolved = self._resolve_repo(local_path)
+
+        project = await offload(self._modify, project_id, clean_name, resolved, permission)
+        if project.local_path == resolved:  # 路径没变就不用重新探测
+            return project
+        return await self.refresh(project_id)
+
+    async def delete(self, project_id: int) -> Project:
+        project = await self.get(project_id)
+        await offload(self._remove, project_id)
+        return project
+
+    async def refresh(self, project_id: int) -> Project:
+        project = await self.get(project_id)
+        status = await self._git.probe(project.local_path)
+        updated = await offload(self._save_status, project_id, status)
+        return updated or project
+
+    async def refresh_all(self, *, on_progress: Progress | None = None) -> list[Project]:
+        projects = await self.list_projects()
+        if not projects:
+            return []
+
+        total = len(projects)
+        _notify(on_progress, 0, total)
+        done = itertools.count(1)
+
+        async def probe(project: Project) -> GitStatus:
+            status = await self._git.probe(project.local_path)
+            _notify(on_progress, next(done), total)
+            return status
+
+        statuses = await gather_limited(projects, probe, limit=GIT_CONCURRENCY)
+        pairs = [(project.id, status) for project, status in zip(projects, statuses, strict=True)]
+        return await offload(self._save_statuses, pairs)
+
+    # ------------------------------------------------------------------ 提交
+    async def preview(self, project_id: int) -> GitStatus:
+        """提交前的实时预览：分支、领先/落后、待提交文件清单。"""
+        project = await self.get(project_id)
+        return await self._git.probe(project.local_path)
+
+    async def commit(self, project_id: int, message: str, *, push: bool = True) -> CommitOutcome:
+        project = await self.get(project_id)
+        committed, pushed, detail, status = await self._git.commit(
+            project.local_path, message, push=push
+        )
+        await offload(self._save_status, project_id, status)
+        return CommitOutcome(
+            committed=committed,
+            pushed=pushed,
+            detail=detail,
+            status=status,
+        )
+
+    # ------------------------------------------------------------------ 统计
+    async def sync_history(
+        self,
+        project_id: int | None = None,
+        *,
+        on_progress: Progress | None = None,
+    ) -> SyncOutcome:
+        """采集 git 历史并写入数据库。单个项目失败不影响其余项目。"""
+        targets = (
+            [await self.get(project_id)] if project_id is not None else await self.list_projects()
+        )
+        if not targets:
+            return SyncOutcome()
+
+        created = updated = 0
+        failures: list[str] = []
+        for index, project in enumerate(targets, start=1):
+            try:
+                commits = await self._git.history(project.local_path, limit=GIT_HISTORY_LIMIT)
+                new_count, changed_count = await offload(self._store_commits, project.id, commits)
+                created += new_count
+                updated += changed_count
+            except GitError as exc:
+                failures.append(f"{project.name}：{exc}")
+            finally:
+                _notify(on_progress, index, len(targets))
+
+        return SyncOutcome(
+            projects=len(targets),
+            created=created,
+            updated=updated,
+            failures=tuple(failures),
+        )
+
+    async def report(
+        self,
+        *,
+        project_id: int | None = None,
+        days: int | None = None,
+        row_limit: int = REPORT_ROW_LIMIT,
+    ) -> Report:
+        return await offload(self._build_report, project_id, days, row_limit)
+
+    # ------------------------------------------------------------------ 同步实现
+    def _load_projects(self) -> list[Project]:
         with session_scope() as session:
-            if get_project_by_path(session, resolved):
+            return project_repo.list_projects(session)
+
+    def _load_project(self, project_id: int) -> Project | None:
+        with session_scope() as session:
+            return project_repo.get_project(session, project_id)
+
+    def _insert(self, name: str, local_path: str, permission: Permission) -> Project:
+        with session_scope() as session:
+            if project_repo.find_by_path(session, local_path) is not None:
                 raise ValueError("该路径已添加为项目")
-            project = Project(
-                name=name.strip(),
-                local_path=resolved,
-                permission=permission.value,
+            return project_repo.create_project(
+                session,
+                name=name,
+                local_path=local_path,
+                permission=permission,
+                now=datetime.now(),
             )
-            return save_project(session, project)
 
-    @staticmethod
-    def update(
+    def _modify(
+        self,
         project_id: int,
         name: str,
         local_path: str,
         permission: Permission,
     ) -> Project:
-        resolved = str(Path(local_path).resolve())
-        if not Path(resolved).is_dir():
-            raise ValueError("本地路径不存在")
-        if not GitService.is_git_repo(resolved):
-            raise ValueError("所选路径不是 Git 仓库")
-
         with session_scope() as session:
-            project = get_project(session, project_id)
-            if not project:
-                raise ValueError("项目不存在")
+            existing = project_repo.find_by_path(session, local_path)
+            if existing is not None and existing.id != project_id:
+                raise ValueError("该路径已被其他项目占用")
+            project = project_repo.update_project(
+                session,
+                project_id,
+                name=name,
+                local_path=local_path,
+                permission=permission,
+                now=datetime.now(),
+            )
+            if project is None:
+                raise ValueError("项目不存在或已被删除")
+            return project
 
-            existing = get_project_by_path(session, resolved)
-            if existing and existing.id != project_id:
-                raise ValueError("该路径已被其他项目使用")
-
-            project.name = name.strip()
-            project.local_path = resolved
-            project.permission = permission.value
-            return save_project(session, project)
-
-    @staticmethod
-    def remove(project_id: int) -> None:
+    def _remove(self, project_id: int) -> None:
         with session_scope() as session:
-            if not delete_project(session, project_id):
-                raise ValueError("项目不存在")
+            commit_repo.delete_for_project(session, project_id)
+            if not project_repo.delete_project(session, project_id):
+                raise ValueError("项目不存在或已被删除")
 
-    @staticmethod
-    async def refresh_git_status(project: Project) -> Project:
+    def _save_status(self, project_id: int, status: GitStatus) -> Project | None:
         with session_scope() as session:
-            stored = get_project(session, project.id)
-            if not stored:
-                raise ValueError("项目不存在")
-            repo_path = stored.local_path
+            return project_repo.save_status(session, project_id, status, now=datetime.now())
 
-        status = await GitService.get_status(repo_path)
-        return ProjectService._apply_status(project.id, status)
-
-    @staticmethod
-    async def refresh_all_git_status() -> list[Project]:
-        projects = ProjectService.get_all()
-        if not projects:
-            return []
-
-        statuses = await asyncio.gather(
-            *(GitService.get_status(project.local_path) for project in projects)
-        )
+    def _save_statuses(self, pairs: Sequence[tuple[int, GitStatus]]) -> list[Project]:
+        now = datetime.now()
         updated: list[Project] = []
         with session_scope() as session:
-            for project, status in zip(projects, statuses, strict=True):
-                stored = get_project(session, project.id)
-                if not stored:
-                    continue
-                stored.has_remote = status.has_remote
-                stored.has_local_changes = status.has_local_changes
-                stored.has_gitignore = status.has_gitignore
-                updated.append(save_project(session, stored))
+            for project_id, status in pairs:
+                project = project_repo.save_status(session, project_id, status, now=now)
+                if project is not None:
+                    updated.append(project)
         return updated
 
-    @staticmethod
-    def _apply_status(project_id: int, status: GitStatus) -> Project:
+    def _store_commits(self, project_id: int, commits: Sequence[Commit]) -> tuple[int, int]:
         with session_scope() as session:
-            project = get_project(session, project_id)
-            if not project:
-                raise ValueError("项目不存在")
-            project.has_remote = status.has_remote
-            project.has_local_changes = status.has_local_changes
-            project.has_gitignore = status.has_gitignore
-            return save_project(session, project)
+            return commit_repo.upsert_commits(session, project_id, commits)
 
-    @staticmethod
-    async def commit(project_id: int, message: str) -> Project:
+    def _build_report(
+        self,
+        project_id: int | None,
+        days: int | None,
+        row_limit: int,
+    ) -> Report:
+        since = None if days is None else date.today() - timedelta(days=days - 1)
         with session_scope() as session:
-            project = get_project(session, project_id)
-            if not project:
-                raise ValueError("项目不存在")
-            repo_path = project.local_path
-
-        result = await GitService.commit_and_push(repo_path, message)
-        if not result.ok:
-            raise RuntimeError(result.stderr or result.stdout)
-
-        status = await GitService.get_status(repo_path)
-        return ProjectService._apply_status(project_id, status)
-
-    @staticmethod
-    async def collect_statistics(project_id: int | None = None) -> int:
-        with session_scope() as session:
-            projects = (
-                [get_project(session, project_id)]
-                if project_id is not None
-                else list_projects(session)
+            names = {project.id: project.name for project in project_repo.list_projects(session)}
+            commits_count, insertions, deletions, files_changed, active = commit_repo.totals(
+                session, project_id=project_id, since=since
             )
-            projects = [project for project in projects if project]
+            daily = commit_repo.daily_totals(session, project_id=project_id, since=since)
+            grouped = commit_repo.project_totals(session, project_id=project_id, since=since)
+            total_rows = commit_repo.count(session, project_id=project_id, since=since)
+            commits = commit_repo.list_commits(
+                session, project_id=project_id, since=since, limit=row_limit
+            )
 
-        total_saved = 0
-        for project in projects:
-            records = await GitService.collect_commits(project.local_path)
-            with session_scope() as session:
-                total_saved += upsert_commit_records(session, project.id, records)
-        return total_saved
+        return Report(
+            totals=Totals(
+                commits=commits_count,
+                insertions=insertions,
+                deletions=deletions,
+                files_changed=files_changed,
+                active_projects=active,
+            ),
+            trend=_build_trend(daily, days),
+            rows=tuple(
+                CommitRow(
+                    commit=commit, project_name=names.get(commit.project_id, _UNKNOWN_PROJECT)
+                )
+                for commit in commits
+            ),
+            per_project=tuple(
+                ProjectTotals(
+                    project_id=row[0],
+                    project_name=names.get(row[0], _UNKNOWN_PROJECT),
+                    commits=row[1],
+                    insertions=row[2],
+                    deletions=row[3],
+                )
+                for row in grouped
+            ),
+            row_count=total_rows,
+            truncated=total_rows > len(commits),
+        )
 
     @staticmethod
-    def get_commit_records(project_id: int | None = None) -> list[CommitRecord]:
-        with session_scope() as session:
-            return list_commit_records(session, project_id)
+    def _resolve_repo(local_path: str) -> str:
+        """校验并规范化用户选择的目录。"""
+        raw = local_path.strip()
+        if not raw:
+            raise ValueError("请选择本地路径")
+        resolved = Path(raw).expanduser()
+        if not resolved.is_dir():
+            raise ValueError("本地路径不存在或不是目录")
+        if not GitService.is_repo(resolved):
+            raise ValueError("所选目录不是 Git 仓库（未找到 .git）")
+        return str(resolved.resolve())
 
-    @staticmethod
-    def get_commit_records_with_projects(
-        project_id: int | None = None,
-    ) -> list[tuple[CommitRecord, Project]]:
-        with session_scope() as session:
-            projects = {project.id: project for project in list_projects(session)}
-            records = list_commit_records(session, project_id)
-            return [
-                (record, projects[record.project_id])
-                for record in records
-                if record.project_id in projects
-            ]
+
+# --------------------------------------------------------------------------- 辅助
+def _build_trend(
+    daily: Sequence[tuple[str, int, int, int]],
+    days: int | None,
+) -> tuple[TrendPoint, ...]:
+    """把稀疏的按天聚合补齐成连续序列，缺失的日期补 0，图表才不会跳。"""
+    window = min(days or TREND_DAYS_DEFAULT, TREND_DAYS_MAX)
+    buckets = {
+        row[0]: TrendPoint(
+            day=date.fromisoformat(row[0]),
+            commits=row[1],
+            insertions=row[2],
+            deletions=row[3],
+        )
+        for row in daily
+    }
+    today = date.today()
+    return tuple(
+        buckets.get(
+            (day := today - timedelta(days=offset)).isoformat(),
+            TrendPoint(day=day),
+        )
+        for offset in range(window - 1, -1, -1)
+    )
+
+
+def _notify(callback: Progress | None, done: int, total: int) -> None:
+    if callback is not None:
+        callback(done, total)
