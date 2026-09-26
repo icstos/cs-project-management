@@ -376,7 +376,7 @@ def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
             labels=[
                 fc.ChartAxisLabel(
                     value=index,
-                    label=ft.Text(ui.format_day(point.day), size=10, color=T.MUTED_TEXT),
+                    label=ui.chart_label(ui.format_day(point.day)),
                 )
                 for index, point in enumerate(trend)
                 if index % label_step == 0 or index == len(trend) - 1
@@ -390,7 +390,7 @@ def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
             labels=[
                 fc.ChartAxisLabel(
                     value=value,
-                    label=ft.Text(ui.format_count(value), size=10, color=T.MUTED_TEXT),
+                    label=ui.chart_label(ui.format_count(value)),
                 )
                 for value in _axis_values(low, high, step)
             ],

@@ -27,6 +27,14 @@ def _resolve_data_dir() -> Path:
 DATA_DIR = _resolve_data_dir()
 DB_PATH = DATA_DIR / "app.db"
 
+# 字体：全应用统一使用本地 "阿里巴巴普惠体"。
+# FONT_ASSET_PATH 是相对 **assets 目录** 的路径，Flet 客户端按此加载字体文件；
+# FONT_FILE 是本机绝对路径，仅用于启动时校验文件是否存在。
+FONT_FAMILY = "AlibabaPuHuiTi"
+FONT_FILE_NAME = "AlibabaPuHuiTi-3-55-Regular.otf"
+FONT_ASSET_PATH = f"fonts/{FONT_FILE_NAME}"
+FONT_FILE = PACKAGE_ROOT / "assets" / "fonts" / FONT_FILE_NAME
+
 # 窗口
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 840

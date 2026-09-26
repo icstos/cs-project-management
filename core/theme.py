@@ -11,6 +11,8 @@ from enum import StrEnum
 
 import flet as ft
 
+from core.config import FONT_FAMILY
+
 # --------------------------------------------------------------------------- 间距
 SPACE_XXS = 2
 SPACE_XS = 4
@@ -120,6 +122,28 @@ def tone_style(tone: Tone) -> ToneStyle:
 
 
 # --------------------------------------------------------------------------- 主题
+def text_style(
+    size: int,
+    *,
+    weight: ft.FontWeight | None = None,
+    color: ft.ColorValue | None = None,
+) -> ft.TextStyle:
+    """构造带应用字体的文本样式。
+
+    ``Theme.font_family`` 只兜得住"没有显式样式"的文本；而 Material 各处的
+    ``*_text_style``（NavigationRail 标签、DataTable、Chip、Dropdown、Tooltip…）
+    在客户端是**整体替换**默认文本样式而非 merge，显式构造的 ``TextStyle``
+    一旦漏掉 ``font_family``，该处就会悄悄退回系统默认字体。因此所有显式文本
+    样式统一从这里出，字体不会漏。
+    """
+    return ft.TextStyle(
+        size=size,
+        weight=weight,
+        color=color,
+        font_family=FONT_FAMILY,
+    )
+
+
 def _button_style(
     *,
     radius: int = RADIUS_MD,
@@ -154,9 +178,14 @@ def field_border(radius: int = RADIUS_MD) -> dict[ft.ControlState, ft.OutlineInp
 
 
 def build_theme() -> ft.Theme:
-    """构建 Material 3 浅色主题。"""
+    """构建 Material 3 浅色主题。
+
+    全局字体在 ``font_family`` 上指定一次，覆盖所有未显式声明样式的文本；
+    显式声明样式的部件由 :func:`text_style` 统一补齐。
+    """
     return ft.Theme(
         color_scheme_seed=ft.Colors.INDIGO,
+        font_family=FONT_FAMILY,
         use_material3=True,
         visual_density=ft.VisualDensity.COMFORTABLE,
         card_theme=ft.CardTheme(
@@ -184,10 +213,10 @@ def build_theme() -> ft.Theme:
             indicator_color=ft.Colors.PRIMARY_CONTAINER,
             indicator_shape=ft.RoundedRectangleBorder(radius=RADIUS_MD),
             label_type=ft.NavigationRailLabelType.ALL,
-            selected_label_text_style=ft.TextStyle(
-                size=12, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE
+            selected_label_text_style=text_style(
+                12, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE
             ),
-            unselected_label_text_style=ft.TextStyle(size=12, color=MUTED_TEXT),
+            unselected_label_text_style=text_style(12, color=MUTED_TEXT),
         ),
         snackbar_theme=ft.SnackBarTheme(
             behavior=ft.SnackBarBehavior.FLOATING,
@@ -196,19 +225,19 @@ def build_theme() -> ft.Theme:
         ),
         data_table_theme=ft.DataTableTheme(
             heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGH,
-            heading_text_style=ft.TextStyle(weight=ft.FontWeight.W_600, size=13, color=MUTED_TEXT),
-            data_text_style=ft.TextStyle(size=13),
+            heading_text_style=text_style(13, weight=ft.FontWeight.W_600, color=MUTED_TEXT),
+            data_text_style=text_style(13),
             divider_thickness=1,
         ),
         chip_theme=ft.ChipTheme(
             shape=ft.RoundedRectangleBorder(radius=RADIUS_PILL),
             padding=ft.Padding.symmetric(horizontal=10, vertical=2),
-            label_text_style=ft.TextStyle(size=12, weight=ft.FontWeight.W_500),
+            label_text_style=text_style(12, weight=ft.FontWeight.W_500),
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
             border_side=ft.BorderSide(1, BORDER_COLOR),
         ),
         dropdown_theme=ft.DropdownTheme(
-            text_style=ft.TextStyle(size=14),
+            text_style=text_style(14),
             menu_style=ft.MenuStyle(
                 bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
                 shape=ft.RoundedRectangleBorder(radius=RADIUS_MD),
@@ -221,7 +250,7 @@ def build_theme() -> ft.Theme:
         divider_theme=ft.DividerTheme(color=BORDER_COLOR, thickness=1),
         tooltip_theme=ft.TooltipTheme(
             wait_duration=ft.Duration(milliseconds=400),
-            text_style=ft.TextStyle(size=12),
+            text_style=text_style(12),
         ),
         progress_indicator_theme=ft.ProgressIndicatorTheme(
             color=ft.Colors.PRIMARY,

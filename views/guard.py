@@ -68,7 +68,9 @@ def error_card(name: str, exc: BaseException) -> ft.Control:
                     ft.Text(
                         stack,
                         size=11,
-                        font_family="Consolas",
+                        font_family=T.FONT_FAMILY,
+                        # 堆栈缩进靠空格对齐，中文字体字宽不等，补等宽字体兜底。
+                        font_family_fallback=["Consolas", "monospace"],
                         selectable=True,
                         color=T.MUTED_TEXT,
                     ),

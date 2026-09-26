@@ -29,6 +29,15 @@ def muted(text: str, *, size: int = 12, expand: bool = False, max_lines: int = 1
     )
 
 
+def chart_label(text: str, *, size: int = 10) -> ft.Text:
+    """图表内的轴标签 / 数据标签。
+
+    这些文本由画布直接绘制，拿不到 Material 主题的默认文本样式，
+    因此必须显式声明字体，否则会退回系统默认字体。
+    """
+    return ft.Text(text, size=size, color=T.MUTED_TEXT, font_family=T.FONT_FAMILY)
+
+
 def title(text: str, *, size: int = 20, weight=ft.FontWeight.W_600) -> ft.Text:
     return ft.Text(text, size=size, weight=weight)
 
