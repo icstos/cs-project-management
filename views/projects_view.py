@@ -11,12 +11,14 @@ from enum import StrEnum
 
 import flet as ft
 
-from core import shell
+from core import paths, shell
 from core import theme as T
+from core.paths import problem
+from core.tasks import offload
 from models.dto import Project
 from services.project_service import ProjectService
 from views import ui
-from views.dialogs import ProjectDraft, delete_project_dialog, project_form_dialog
+from views.dialogs import PathCheck, ProjectDraft, delete_project_dialog, project_form_dialog
 from views.guard import guarded
 
 CARD_COL = {"xs": 12, "md": 6, "xl": 4}
@@ -71,6 +73,7 @@ def ProjectsView(
     active_filter, set_filter = ft.use_state(ProjectFilter.ALL)
     sort_key, set_sort = ft.use_state(SortKey.NAME)
     draft, set_draft = ft.use_state(None)
+    path_check, set_path_check = ft.use_state(None)
     form_error, set_form_error = ft.use_state(None)
     saving, set_saving = ft.use_state(False)
     pending_delete, set_pending_delete = ft.use_state(None)
@@ -87,14 +90,17 @@ def ProjectsView(
     # ------------------------------------------------------------------ 表单
     def open_create() -> None:
         set_form_error(None)
+        set_path_check(None)
         set_draft(ProjectDraft.blank())
 
     def open_edit(project: Project) -> None:
         set_form_error(None)
+        set_path_check(None)
         set_draft(ProjectDraft.from_project(project))
 
     def close_form() -> None:
         set_draft(None)
+        set_path_check(None)
         set_form_error(None)
 
     def open_new_on_request() -> None:
@@ -106,10 +112,72 @@ def ProjectsView(
     def change_draft(**changes: object) -> None:
         set_draft(lambda current: current.with_fields(**changes) if current else current)
 
+    # ------------------------------------------------------------------ 路径输入
+    # 路径既可以点「浏览」选，也可以直接粘贴：资源管理器的「复制为路径」会带一层
+    # 引号，浏览器地址栏复制出来的是 file:///D:/repo，形态都由 core.paths 收敛。
+    # 核验丢进线程池——断开的网络盘会让 stat 阻塞数秒，压在界面线程上就是卡死。
+    async def verify_path(text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        set_path_check(PathCheck(text, await offload(problem, text)))
+
+    # 路径一变就核验一次：手输、粘贴、浏览选目录、打开编辑对话框都汇到这里
+    current_path = draft.local_path if draft is not None else ""
+    ft.use_effect(lambda: page.run_task(verify_path, current_path), [current_path])
+
+    def change_path(raw: str) -> None:
+        """输入框变化：立刻整理明显的粘贴痕迹（包裹引号 / file: 链接 / 换行）。
+
+        只处理"绝不可能是手输中间态"的特征；正斜杠与尾部反斜杠留给
+        ``commit_path``，否则用户敲到 ``D:\\`` 时字符会被当场吃掉。
+        """
+        text = paths.normalize(raw) if paths.has_paste_marks(raw) else raw.strip()
+        set_draft(lambda current: _with_path(current, text))
+
+    def commit_path() -> None:
+        """失焦 / 回车：把分隔符、盘符大小写、多余的反斜杠统一成本机写法。
+
+        取值以草稿为准——blur 事件不携带文本，而 change 已经把最新值写进来了。
+        """
+        if draft is None:
+            return
+        text = paths.normalize(draft.local_path)
+        if text and text != draft.local_path:
+            set_draft(lambda current: _with_path(current, text))
+
+    async def clipboard_path() -> str:
+        """取剪贴板里的路径：优先「复制的文件夹」，其次纯文本。"""
+        try:
+            picked = await clipboard.get_files()
+        except Exception:  # 平台不支持，或剪贴板里放的本来就不是文件
+            picked = []
+        for item in picked:
+            cleaned = paths.normalize(item)
+            if cleaned:
+                return cleaned
+        try:
+            return paths.normalize(await clipboard.get() or "")
+        except Exception as exc:
+            ui.toast(page, f"读取剪贴板失败：{exc}", tone=T.Tone.DANGER)
+            return ""
+
+    async def paste_path(_=None) -> None:
+        """从剪贴板填入路径。
+
+        在资源管理器里复制文件夹时，剪贴板里放的是「文件对象」而不是文本，
+        输入框里直接 Ctrl+V 未必粘得出来，所以先按文件列表取、再退回纯文本。
+        """
+        text = await clipboard_path()
+        if not text:
+            ui.toast(page, "剪贴板里没有可用的路径", tone=T.Tone.WARNING)
+            return
+        set_draft(lambda current: _with_path(current, text))
+
     async def pick_directory(_) -> None:
         selected = await picker.get_directory_path(dialog_title="选择 Git 仓库目录")
         if selected:
-            change_draft(local_path=selected)
+            set_draft(lambda current: _with_path(current, selected))
             set_form_error(None)
 
     async def save(_) -> None:
@@ -184,8 +252,12 @@ def ProjectsView(
         project_form_dialog(
             draft=draft,
             error=form_error,
+            path_check=path_check,
             saving=saving,
             on_change=change_draft,
+            on_path_change=change_path,
+            on_path_commit=commit_path,
+            on_paste_path=paste_path,
             on_pick_path=pick_directory,
             on_cancel=close_form,
             on_save=save,
@@ -559,6 +631,20 @@ def _project_card(
 
 
 # --------------------------------------------------------------------------- 纯函数
+def _with_path(draft: ProjectDraft | None, text: str) -> ProjectDraft | None:
+    """更新草稿里的路径。
+
+    新增项目时名称多半还空着，顺手用目录名补一个，省得对着路径再敲一遍；
+    编辑项目时不动名称——改路径不等于想改名。
+    """
+    if draft is None:
+        return None
+    changes: dict[str, object] = {"local_path": text}
+    if not draft.is_edit and not draft.name.strip():
+        changes["name"] = paths.suggest_name(text)
+    return draft.with_fields(**changes)
+
+
 def _shape(
     projects: list[Project],
     query: str,

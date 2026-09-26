@@ -21,6 +21,7 @@ from core.config import (
     TREND_DAYS_DEFAULT,
     TREND_DAYS_MAX,
 )
+from core.paths import normalize, problem
 from core.tasks import gather_limited, offload
 from models.database import session_scope
 from models.dto import (
@@ -297,16 +298,16 @@ class ProjectService:
 
     @staticmethod
     def _resolve_repo(local_path: str) -> str:
-        """校验并规范化用户选择的目录。"""
-        raw = local_path.strip()
-        if not raw:
-            raise ValueError("请选择本地路径")
-        resolved = Path(raw).expanduser()
-        if not resolved.is_dir():
-            raise ValueError("本地路径不存在或不是目录")
-        if not GitService.is_repo(resolved):
-            raise ValueError("所选目录不是 Git 仓库（未找到 .git）")
-        return str(resolved.resolve())
+        """校验并规范化用户填入的目录。
+
+        路径可能来自浏览按钮，也可能是直接粘贴的（带引号、``file://`` 前缀、
+        正斜杠……），所以先走 ``core.paths.normalize`` 收敛形态；判据与界面上的
+        即时提示同源（``core.paths.problem``），界面说可用就不会在这里再被拒。
+        """
+        issue = problem(local_path)
+        if issue:
+            raise ValueError(issue)
+        return str(Path(normalize(local_path)).resolve())
 
 
 # --------------------------------------------------------------------------- 辅助

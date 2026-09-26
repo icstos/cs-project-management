@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.config import GIT_EXECUTABLE, GIT_TIMEOUT
+from core.paths import is_git_repo
 from models.dto import Change, Commit, GitStatus, as_local_naive
 
 _LOG_FORMAT = "%x1e%H%x1f%an%x1f%aI%x1f%s"
@@ -49,8 +50,8 @@ class GitService:
     # ------------------------------------------------------------------ 基础
     @staticmethod
     def is_repo(path: str | Path) -> bool:
-        """``.git`` 可能是目录（普通仓库）也可能是文件（worktree / submodule）。"""
-        return (Path(path) / ".git").exists()
+        """目录是否是 Git 仓库（实现在 ``core.paths``，界面层也用它）。"""
+        return is_git_repo(path)
 
     async def run(self, cwd: str | None, *args: str) -> CommandResult:
         """执行 git 子命令，超时或找不到可执行文件时抛出 ``GitError``。"""
