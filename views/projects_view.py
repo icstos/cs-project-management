@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from enum import StrEnum
 
@@ -20,6 +21,8 @@ from services.project_service import ProjectService
 from views import ui
 from views.dialogs import PathCheck, ProjectDraft, delete_project_dialog, project_form_dialog
 from views.guard import guarded
+
+logger = logging.getLogger(__name__)
 
 CARD_COL = {"xs": 12, "md": 6, "xl": 4}
 
@@ -159,6 +162,7 @@ def ProjectsView(
         try:
             return paths.normalize(await clipboard.get() or "")
         except Exception as exc:
+            logger.warning("读取剪贴板失败：%s", exc)
             ui.toast(page, f"读取剪贴板失败：{exc}", tone=T.Tone.DANGER)
             return ""
 
@@ -172,11 +176,13 @@ def ProjectsView(
         if not text:
             ui.toast(page, "剪贴板里没有可用的路径", tone=T.Tone.WARNING)
             return
+        logger.debug("从剪贴板填入路径：%s", text)
         set_draft(lambda current: _with_path(current, text))
 
     async def pick_directory(_) -> None:
         selected = await picker.get_directory_path(dialog_title="选择 Git 仓库目录")
         if selected:
+            logger.debug("浏览选择目录：%s", selected)
             set_draft(lambda current: _with_path(current, selected))
             set_form_error(None)
 
@@ -204,6 +210,12 @@ def ProjectsView(
             close_form()
             await refresh()
         except (ValueError, RuntimeError) as exc:
+            logger.warning(
+                "保存项目失败（%s，路径=%r）：%s",
+                "编辑" if draft.is_edit else "新增",
+                draft.local_path,
+                exc,
+            )
             set_form_error(str(exc))
         finally:
             set_saving(False)
@@ -218,6 +230,7 @@ def ProjectsView(
             ui.toast(page, f"已移除「{project.name}」")
             await refresh()
         except (ValueError, RuntimeError) as exc:
+            logger.warning("删除项目失败（#%d「%s」）：%s", project.id, project.name, exc)
             set_pending_delete(None)
             ui.toast(page, str(exc), tone=T.Tone.DANGER)
 
@@ -225,9 +238,11 @@ def ProjectsView(
     async def refresh_one(project: Project) -> None:
         set_busy_project(project.id)
         try:
+            logger.debug("重新探测项目「%s」（%s）", project.name, project.local_path)
             await service.refresh(project.id)
             await refresh()
         except (ValueError, RuntimeError) as exc:
+            logger.warning("重新探测项目「%s」失败：%s", project.name, exc)
             ui.toast(page, str(exc), tone=T.Tone.DANGER)
         finally:
             set_busy_project(None)
@@ -242,6 +257,7 @@ def ProjectsView(
             clipboard.set(project.local_path)
             ui.toast(page, "路径已复制到剪贴板", tone=T.Tone.INFO)
         except Exception as exc:
+            logger.warning("复制路径到剪贴板失败：%s", exc)
             ui.toast(page, f"复制失败：{exc}", tone=T.Tone.DANGER)
 
     def clear_search(_=None) -> None:

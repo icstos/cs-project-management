@@ -5,11 +5,15 @@
 1. 校验用户输入（名称、路径、是否 Git 仓库、是否重复）；
 2. 把阻塞的 SQLite 访问丢进线程池；
 3. 把多次 git 探测按并发上限并行执行，最后一次性落库。
+
+日志分工：外部命令的细节在 ``core.proc``，这里只记**操作流水**（谁对哪个项目做了什么、
+结果如何），两者按时间线拼起来就能还原一次完整的用户操作。
 """
 
 from __future__ import annotations
 
 import itertools
+import logging
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -40,6 +44,8 @@ from models.dto import (
 from repositories import commit_repo, project_repo
 from services.git_service import GitError, GitService
 
+logger = logging.getLogger(__name__)
+
 Progress = Callable[[int, int], None]
 _UNKNOWN_PROJECT = "已删除项目"
 
@@ -69,6 +75,7 @@ class ProjectService:
         resolved = self._resolve_repo(local_path)
 
         project = await offload(self._insert, clean_name, resolved, permission)
+        logger.info("新增项目「%s」→ %s（%s）", clean_name, resolved, permission.value)
         return await self.refresh(project.id)
 
     async def update(
@@ -85,6 +92,9 @@ class ProjectService:
         resolved = self._resolve_repo(local_path)
 
         project = await offload(self._modify, project_id, clean_name, resolved, permission)
+        logger.info(
+            "更新项目 #%d →「%s」%s（%s）", project_id, clean_name, resolved, permission.value
+        )
         if project.local_path == resolved:  # 路径没变就不用重新探测
             return project
         return await self.refresh(project_id)
@@ -92,6 +102,7 @@ class ProjectService:
     async def delete(self, project_id: int) -> Project:
         project = await self.get(project_id)
         await offload(self._remove, project_id)
+        logger.info("删除项目 #%d「%s」（%s）", project_id, project.name, project.local_path)
         return project
 
     async def refresh(self, project_id: int) -> Project:
@@ -103,9 +114,11 @@ class ProjectService:
     async def refresh_all(self, *, on_progress: Progress | None = None) -> list[Project]:
         projects = await self.list_projects()
         if not projects:
+            logger.info("刷新全部：暂无项目")
             return []
 
         total = len(projects)
+        logger.info("刷新全部：开始探测 %d 个仓库（并发 %d）", total, GIT_CONCURRENCY)
         _notify(on_progress, 0, total)
         done = itertools.count(1)
 
@@ -116,7 +129,16 @@ class ProjectService:
 
         statuses = await gather_limited(projects, probe, limit=GIT_CONCURRENCY)
         pairs = [(project.id, status) for project, status in zip(projects, statuses, strict=True)]
-        return await offload(self._save_statuses, pairs)
+        updated = await offload(self._save_statuses, pairs)
+
+        dirty = sum(1 for status in statuses if status.has_local_changes)
+        broken = [
+            project.name for project, status in zip(projects, statuses, strict=True) if status.error
+        ]
+        logger.info("刷新全部：完成 %d 个仓库，%d 个有待提交变更", len(updated), dirty)
+        for name in broken:
+            logger.warning("刷新全部：项目「%s」状态异常", name)
+        return updated
 
     # ------------------------------------------------------------------ 提交
     async def preview(self, project_id: int) -> GitStatus:
@@ -130,6 +152,9 @@ class ProjectService:
             project.local_path, message, push=push
         )
         await offload(self._save_status, project_id, status)
+        # git_service 记的是仓库路径，这里补上项目名，日志里才对得上界面
+        level = logging.INFO if pushed or not push else logging.WARNING
+        logger.log(level, "项目「%s」提交结果：%s", project.name, detail)
         return CommitOutcome(
             committed=committed,
             pushed=pushed,
@@ -151,6 +176,7 @@ class ProjectService:
         if not targets:
             return SyncOutcome()
 
+        logger.info("同步历史：开始采集 %d 个仓库", len(targets))
         created = updated = 0
         failures: list[str] = []
         for index, project in enumerate(targets, start=1):
@@ -159,11 +185,25 @@ class ProjectService:
                 new_count, changed_count = await offload(self._store_commits, project.id, commits)
                 created += new_count
                 updated += changed_count
+                logger.debug(
+                    "同步历史：项目「%s」新增 %d 条、更新 %d 条",
+                    project.name,
+                    new_count,
+                    changed_count,
+                )
             except GitError as exc:
+                logger.warning("同步历史：项目「%s」失败：%s", project.name, exc)
                 failures.append(f"{project.name}：{exc}")
             finally:
                 _notify(on_progress, index, len(targets))
 
+        logger.info(
+            "同步历史：完成 %d 个仓库，新增 %d 条、更新 %d 条，失败 %d 个",
+            len(targets),
+            created,
+            updated,
+            len(failures),
+        )
         return SyncOutcome(
             projects=len(targets),
             created=created,
@@ -306,6 +346,7 @@ class ProjectService:
         """
         issue = problem(local_path)
         if issue:
+            logger.warning("路径校验未通过：%r → %s", local_path, issue)
             raise ValueError(issue)
         return str(Path(normalize(local_path)).resolve())
 

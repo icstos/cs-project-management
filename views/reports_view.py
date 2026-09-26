@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from datetime import date
@@ -18,6 +19,8 @@ from models.dto import CommitRow, Project, Report, TrendPoint
 from services.project_service import ProjectService
 from views import ui
 from views.guard import guarded
+
+logger = logging.getLogger(__name__)
 
 _RANGES: tuple[tuple[str, int | None], ...] = (
     ("7 天", 7),
@@ -52,6 +55,7 @@ def ReportsView(
         try:
             set_report(await service.report(project_id=project_id, days=days))
         except Exception as exc:
+            logger.exception("读取统计失败（project_id=%s，days=%s）", project_id, days)
             ui.toast(page, f"读取统计失败：{exc}", tone=T.Tone.DANGER)
         finally:
             set_loading(False)
@@ -69,6 +73,7 @@ def ReportsView(
             )
             await load()
         except Exception as exc:
+            logger.exception("同步历史失败（project_id=%s）", project_id)
             ui.toast(page, f"同步失败：{exc}", tone=T.Tone.DANGER)
         finally:
             set_syncing(False)
@@ -95,9 +100,11 @@ def ReportsView(
                 src_bytes=_to_csv(rows),
             )
         except Exception as exc:
+            logger.exception("导出 CSV 失败（%d 行）", len(rows))
             ui.toast(page, f"导出失败：{exc}", tone=T.Tone.DANGER)
             return
         if saved:
+            logger.info("导出提交明细：%d 行 → %s", len(rows), saved)
             ui.toast(page, f"已导出到 {saved}", tone=T.Tone.INFO)
 
     totals = report.totals if report else None

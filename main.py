@@ -1,6 +1,8 @@
 """应用入口：初始化数据库、配置页面与窗口，然后挂载根组件。
 
 页面级配置（主题、窗口、标题）集中在这里，业务组件不直接改 page 属性。
+日志在 ``ft.run`` **之前**装配：flet 只在根 logger 还没有 handler 时才
+``basicConfig``，先装好就能把框架日志一起收进文件。
 """
 
 from __future__ import annotations
@@ -8,7 +10,9 @@ from __future__ import annotations
 import logging
 
 import flet as ft
+from flet.version import flet_version
 
+from core import logs
 from core.config import (
     APP_NAME,
     APP_TAGLINE,
@@ -50,13 +54,18 @@ def configure_page(page: ft.Page) -> None:
 
 
 async def main(page: ft.Page) -> None:
+    # 钩子必须在事件循环里装，才能接管 asyncio 任务的未捕获异常
+    logs.install_hooks()
     init_db()
     configure_page(page)
     page.render(App)
     await page.window.center()
+    logger.info("窗口已就绪（%dx%d）", WINDOW_WIDTH, WINDOW_HEIGHT)
 
 
 def run() -> None:
+    logs.setup_logging()
+    logs.log_startup(flet=flet_version)
     ft.run(main, name=APP_NAME)
 
 

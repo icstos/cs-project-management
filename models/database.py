@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -18,6 +19,8 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from core.config import DATA_DIR, DB_PATH
 from models import entities  # noqa: F401  导入以注册表元数据
+
+logger = logging.getLogger(__name__)
 
 engine = create_engine(
     f"sqlite:///{DB_PATH}",
@@ -55,6 +58,7 @@ def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
     _add_missing_columns()
+    logger.info("数据库就绪：%s", DB_PATH)
 
 
 def _add_missing_columns() -> None:
@@ -66,6 +70,7 @@ def _add_missing_columns() -> None:
         missing = [column for column in table.columns if column.name not in existing]
         if not missing:
             continue
+        logger.info("数据库迁移：%s 补列 %s", table.name, "、".join(c.name for c in missing))
         with engine.begin() as connection:
             for column in missing:
                 connection.execute(

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import flet as ft
@@ -18,6 +19,8 @@ from views.commit_view import CommitView
 from views.guard import guarded
 from views.projects_view import ProjectsView
 from views.reports_view import ReportsView
+
+logger = logging.getLogger(__name__)
 
 _NAV_ITEMS = (
     (ft.Icons.FOLDER_OUTLINED, ft.Icons.FOLDER, "项目"),
@@ -60,6 +63,7 @@ def AppShell():
             set_projects(data)
             set_refreshed_at(datetime.now())
         except Exception as exc:
+            logger.exception("刷新项目列表失败（deep=%s）", deep)
             ui.toast(page, f"刷新失败：{exc}", tone=T.Tone.DANGER)
         finally:
             set_progress("")

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import flet as ft
@@ -19,6 +20,8 @@ from models.dto import Change, ChangeKind, GitStatus, Project
 from services.project_service import ProjectService
 from views import ui
 from views.guard import guarded
+
+logger = logging.getLogger(__name__)
 
 _PANE_WIDTH = 320
 _CHANGE_ICON_TONES: dict[ChangeKind, T.Tone] = {
@@ -97,6 +100,7 @@ def CommitView(
             if not push_touched:
                 set_push(status.has_remote)
         except (ValueError, RuntimeError) as exc:
+            logger.warning("预览提交内容失败（project_id=%s）：%s", selected_id, exc)
             set_preview(None)
             set_preview_error(str(exc))
         finally:
@@ -125,6 +129,12 @@ def CommitView(
             await refresh()
             await load_preview()
         except (ValueError, RuntimeError) as exc:
+            logger.warning(
+                "提交失败（project「%s」，push=%s）：%s",
+                selected.name,
+                will_push,
+                exc,
+            )
             ui.toast(page, str(exc), tone=T.Tone.DANGER)
             set_notice((str(exc), T.Tone.DANGER))
         finally:

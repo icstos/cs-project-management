@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 from collections.abc import Awaitable, Callable, Iterable
+
+logger = logging.getLogger(__name__)
 
 
 async def offload[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -> T:
@@ -38,8 +41,12 @@ async def gather_limited[T, R](
 
 
 async def guard[T](awaitable: Awaitable[T], *, default: T) -> T:
-    """吞掉异常并回退默认值，用于"尽力而为"的后台刷新。"""
+    """吞掉异常并回退默认值，用于"尽力而为"的后台刷新。
+
+    既然把异常吞了，就必须留下堆栈 —— 否则界面没反应、日志也没线索。
+    """
     try:
         return await awaitable
     except Exception:
+        logger.exception("后台任务失败，已回退默认值 %r", default)
         return default

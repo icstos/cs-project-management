@@ -3,6 +3,9 @@
 职责边界：只负责"调用 git 并把输出解析成 DTO"，不碰数据库、不碰界面。
 所有方法都是异步的，子进程并行执行不会阻塞 Flet 事件循环。
 
+命令执行统一走 ``core.proc.run_command``（命令、退出码、耗时与输出都进日志）；
+这里只在"一次业务动作"的边界上补一条人话日志，日志读起来就是操作流水。
+
 解析要点：
 
 * ``git status --porcelain -b`` 一条命令同时拿到分支、上游、领先/落后与变更文件；
@@ -12,15 +15,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from core.config import GIT_EXECUTABLE, GIT_TIMEOUT
 from core.paths import is_git_repo
+from core.proc import CommandError, CommandNotFound, CommandResult, CommandTimeout, run_command
 from models.dto import Change, Commit, GitStatus, as_local_naive
+
+logger = logging.getLogger(__name__)
 
 _LOG_FORMAT = "%x1e%H%x1f%an%x1f%aI%x1f%s"
 _AHEAD = re.compile(r"ahead (\d+)")
@@ -30,21 +36,13 @@ _NON_FAST_FORWARD_REASON = "远程有更新的提交，请先拉取合并再推�
 _AUTH_REASON = "认证失败，请检查远程仓库的凭据"
 _UNREACHABLE_REASON = "无法访问远程仓库（地址错误或无权限）"
 _MISMATCH_REASON = "上游分支名与本地分支名不一致，已按同名分支推送"
+_GIT_MISSING = "未找到 git 命令，请安装 Git 并确认已加入 PATH"
+_HISTORY_EMPTY = ("does not have any commits", "unknown revision")
+_MESSAGE_WIDTH = 60
 
 
 class GitError(RuntimeError):
     """git 不可用、目录不是仓库或命令执行失败。"""
-
-
-@dataclass(frozen=True, slots=True)
-class CommandResult:
-    ok: bool
-    stdout: str
-    stderr: str
-
-    @property
-    def message(self) -> str:
-        return self.stderr or self.stdout or "git 命令执行失败"
 
 
 class GitService:
@@ -58,26 +56,19 @@ class GitService:
         return is_git_repo(path)
 
     async def run(self, cwd: str | None, *args: str) -> CommandResult:
-        """执行 git 子命令，超时或找不到可执行文件时抛出 ``GitError``。"""
-        try:
-            process = await asyncio.create_subprocess_exec(
-                self._executable,
-                *args,
-                cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:
-            raise GitError("未找到 git 命令，请安装 Git 并确认已加入 PATH") from exc
+        """执行 git 子命令；超时或找不到可执行文件时抛出 ``GitError``。
 
+        命令本身的日志（argv、退出码、耗时、stdout/stderr）由 ``core.proc`` 负责，
+        这里只把"跑不起来"的异常翻译成业务层认得的 ``GitError``。
+        """
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), GIT_TIMEOUT)
-        except TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise GitError(f"git {' '.join(args)} 执行超时（>{GIT_TIMEOUT:.0f}s）") from exc
-
-        return CommandResult(process.returncode == 0, _decode(stdout), _decode(stderr))
+            return await run_command((self._executable, *args), cwd=cwd, timeout=GIT_TIMEOUT)
+        except CommandNotFound as exc:
+            raise GitError(_GIT_MISSING) from exc
+        except CommandTimeout as exc:
+            raise GitError(str(exc)) from exc
+        except CommandError as exc:
+            raise GitError(str(exc)) from exc
 
     async def require(self, cwd: str, *args: str) -> str:
         result = await self.run(cwd, *args)
@@ -87,15 +78,19 @@ class GitService:
 
     async def is_available(self) -> bool:
         try:
-            return (await self.run(None, "--version")).ok
-        except GitError:
+            available = (await self.run(None, "--version")).ok
+        except GitError as exc:
+            logger.warning("检测 git 可用性失败：%s", exc)
             return False
+        logger.debug("git 可用性：%s", "可用" if available else "不可用")
+        return available
 
     # ------------------------------------------------------------------ 探测
     async def snapshot(self, repo_path: str) -> GitStatus:
         """一次探测：远程配置 + 工作区状态。两条命令并行执行。"""
         has_gitignore = (Path(repo_path) / ".gitignore").is_file()
         if not self.is_repo(repo_path):
+            logger.debug("探测 %s：不是 Git 仓库", repo_path)
             return GitStatus(has_gitignore=has_gitignore)
 
         remote_result, status_result = await asyncio.gather(
@@ -103,6 +98,7 @@ class GitService:
             self.run(repo_path, "status", "--porcelain", "-b"),
         )
         if not status_result.ok:
+            logger.warning("探测 %s 失败：%s", repo_path, status_result.message)
             return GitStatus(
                 is_repo=True,
                 has_gitignore=has_gitignore,
@@ -110,6 +106,15 @@ class GitService:
             )
 
         branch, upstream, ahead, behind, changes = _parse_status(status_result.stdout)
+        logger.debug(
+            "探测 %s：分支=%s 上游=%s 领先=%d 落后=%d 变更=%d",
+            repo_path,
+            branch or "-",
+            upstream or "-",
+            ahead,
+            behind,
+            len(changes),
+        )
         return GitStatus(
             is_repo=True,
             has_remote=bool(remote_result.stdout.strip()),
@@ -127,6 +132,7 @@ class GitService:
         try:
             return await self.snapshot(repo_path)
         except GitError as exc:
+            logger.warning("探测 %s 异常：%s", repo_path, exc)
             return GitStatus(
                 is_repo=self.is_repo(repo_path),
                 has_gitignore=(Path(repo_path) / ".gitignore").is_file(),
@@ -145,10 +151,15 @@ class GitService:
             str(limit),
         )
         if not result.ok:
-            if "does not have any commits" in result.stderr or "unknown revision" in result.stderr:
-                return []  # 空仓库属于正常情况
+            if _is_empty_history(result):
+                logger.debug("采集 %s 历史：空仓库，暂无提交", repo_path)
+                return []
+            logger.warning("采集 %s 历史失败：%s", repo_path, result.message)
             raise GitError(result.message)
-        return list(_parse_log(result.stdout))
+
+        commits = list(_parse_log(result.stdout))
+        logger.debug("采集 %s 历史：解析出 %d 条提交（上限 %d）", repo_path, len(commits), limit)
+        return commits
 
     # ------------------------------------------------------------------ 远程
     async def remotes(self, repo_path: str) -> list[str]:
@@ -178,6 +189,14 @@ class GitService:
         if not status.changes:
             raise GitError("没有需要提交的变更")
 
+        logger.info(
+            "提交 %s：%d 个文件，说明「%s」%s",
+            repo_path,
+            len(status.changes),
+            _one_line(text),
+            "（不推送）" if not push else "",
+        )
+
         await self.require(repo_path, "add", "--all")
         await self.require(repo_path, "commit", "-m", text)
 
@@ -186,6 +205,7 @@ class GitService:
         if push:
             pushed, detail = await self._push(repo_path, status)
 
+        logger.info("提交 %s → %s", repo_path, detail)
         return (True, pushed, detail, await self.snapshot(repo_path))
 
     async def _push(self, repo_path: str, status: GitStatus) -> tuple[bool, str]:
@@ -199,6 +219,7 @@ class GitService:
         """
         remotes = await self.remotes(repo_path)
         if not remotes:
+            logger.warning("推送 %s 被跳过：未配置任何远程", repo_path)
             return (
                 False,
                 "已提交，但该仓库未配置任何远程仓库，无法推送"
@@ -207,10 +228,18 @@ class GitService:
 
         branch = status.branch
         if not branch:
+            logger.warning("推送 %s 被跳过：游离 HEAD，没有分支", repo_path)
             return (False, "已提交，但当前处于游离 HEAD 状态，没有分支可推送")
 
         upstream = await self._upstream_of(repo_path, branch)
         tracked_remote, _, tracked_branch = upstream.partition("/")
+        logger.info(
+            "推送 %s：分支=%s，目标远程=%s，上游=%s",
+            repo_path,
+            branch,
+            "、".join(remotes),
+            upstream or "（未设置）",
+        )
 
         succeeded: list[str] = []
         failed: list[str] = []
@@ -228,6 +257,7 @@ class GitService:
             try:
                 result = await self.run(repo_path, *args)
             except GitError as exc:  # 超时 / git 不可用：不该拖累其余远程
+                logger.warning("推送 %s → %s 失败：%s", repo_path, remote, exc)
                 failed.append(f"{remote}（{exc}）")
                 continue
 
@@ -235,8 +265,11 @@ class GitService:
                 succeeded.append(remote)
                 if not upstream and not linked:
                     linked = f"{remote}/{target}"
+                logger.info("推送 %s → %s 成功（%s:%s）", repo_path, remote, branch, target)
             else:
-                failed.append(f"{remote}（{_push_reason(result)}）")
+                reason = _push_reason(result)
+                logger.warning("推送 %s → %s 失败：%s", repo_path, remote, reason)
+                failed.append(f"{remote}（{reason}）")
 
         return (not failed, _push_summary(branch, succeeded, failed, linked))
 
@@ -253,8 +286,16 @@ class GitService:
 
 
 # --------------------------------------------------------------------------- 解析
-def _decode(raw: bytes) -> str:
-    return raw.decode("utf-8", errors="replace").strip()
+def _one_line(text: str, *, width: int = _MESSAGE_WIDTH) -> str:
+    """提交说明进日志前压成一行，过长截断。"""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= width else f"{flat[:width]}…"
+
+
+def _is_empty_history(result: CommandResult) -> bool:
+    """空仓库（还没有任何提交）不是错误。"""
+    text = f"{result.stderr}\n{result.stdout}"
+    return any(token in text for token in _HISTORY_EMPTY)
 
 
 def _preferred_first(remotes: list[str]) -> list[str]:

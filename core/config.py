@@ -27,6 +27,13 @@ def _resolve_data_dir() -> Path:
 DATA_DIR = _resolve_data_dir()
 DB_PATH = DATA_DIR / "app.db"
 
+# 日志：文件按 2MB 滚动保留 5 份，控制台级别可用环境变量 CSPM_LOG_LEVEL 覆盖
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "app.log"
+LOG_LEVEL_ENV = "CSPM_LOG_LEVEL"
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_BACKUPS = 5
+
 # 字体：全应用统一使用本地 "阿里巴巴普惠体"。
 # FONT_ASSET_PATH 是相对 **assets 目录** 的路径，Flet 客户端按此加载字体文件；
 # FONT_FILE 是本机绝对路径，仅用于启动时校验文件是否存在。
