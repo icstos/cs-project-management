@@ -45,18 +45,26 @@ def CommitView(
     selected_id, set_selected_id = ft.use_state(None)
     message, set_message = ft.use_state("")
     push, set_push = ft.use_state(True)
+    # 用户是否手动拨过推送开关：没拨过就让开关跟随最新探测结果。
+    # 数据库里缓存的 has_remote 可能已过期（刚加过远程、或远程被删掉）。
+    push_touched, set_push_touched = ft.use_state(False)
+    notice, set_notice = ft.use_state(None)
     committing, set_committing = ft.use_state(False)
     preview, set_preview = ft.use_state(None)
     preview_error, set_preview_error = ft.use_state(None)
     loading_preview, set_loading_preview = ft.use_state(False)
 
     selected = next((item for item in projects if item.id == selected_id), None)
+    has_remote = _has_remote(selected, preview)
+    will_push = push and has_remote
 
     # ------------------------------------------------------------------ 选择
     def choose(project: Project) -> None:
         set_selected_id(project.id)
+        set_push_touched(False)
         set_push(project.has_remote)
         set_preview_error(None)
+        set_notice(None)
 
     def ensure_selection() -> None:
         if not projects:
@@ -67,9 +75,15 @@ def CommitView(
             return
         preferred = next((p for p in projects if p.has_local_changes), projects[0])
         set_selected_id(preferred.id)
+        set_push_touched(False)
         set_push(preferred.has_remote)
+        set_notice(None)
 
     ft.use_effect(ensure_selection, [projects])
+
+    def toggle_push(value: bool) -> None:
+        set_push(value)
+        set_push_touched(True)
 
     async def load_preview() -> None:
         if selected_id is None:
@@ -77,8 +91,11 @@ def CommitView(
             return
         set_loading_preview(True)
         try:
-            set_preview(await service.preview(selected_id))
+            status = await service.preview(selected_id)
+            set_preview(status)
             set_preview_error(None)
+            if not push_touched:
+                set_push(status.has_remote)
         except (ValueError, RuntimeError) as exc:
             set_preview(None)
             set_preview_error(str(exc))
@@ -97,18 +114,19 @@ def CommitView(
             return
 
         set_committing(True)
+        set_notice(None)
         try:
-            outcome = await service.commit(selected.id, message, push=push)
+            outcome = await service.commit(selected.id, message, push=will_push)
             set_message("")
-            ui.toast(
-                page,
-                outcome.detail,
-                tone=T.Tone.SUCCESS if outcome.pushed or not push else T.Tone.WARNING,
-            )
+            tone = T.Tone.SUCCESS if outcome.pushed or not will_push else T.Tone.WARNING
+            ui.toast(page, outcome.detail, tone=tone)
+            # 推送失败的原文可能很长，3 秒的浮层看不完，所以在面板里留一份
+            set_notice((outcome.detail, tone))
             await refresh()
             await load_preview()
         except (ValueError, RuntimeError) as exc:
             ui.toast(page, str(exc), tone=T.Tone.DANGER)
+            set_notice((str(exc), T.Tone.DANGER))
         finally:
             set_committing(False)
 
@@ -156,8 +174,10 @@ def CommitView(
                         message=message,
                         on_message=set_message,
                         on_submit=lambda _: page.run_task(submit),
-                        push=push,
-                        on_push=set_push,
+                        will_push=will_push,
+                        has_remote=has_remote,
+                        on_push=toggle_push,
+                        notice=notice,
                         committing=committing,
                     ),
                 ),
@@ -167,6 +187,26 @@ def CommitView(
 
 
 # --------------------------------------------------------------------------- 构件
+def _has_remote(selected: Project | None, preview: GitStatus | None) -> bool:
+    """是否配置了远程仓库，**以实时探测为准**。
+
+    数据库里缓存的值可能已经过期：用户在仓库目录手工加过远程、或把远程删了。
+    订阅缓存的后果是开关被永久锁死（明明有远程却推不了）。
+    """
+    if preview is not None:
+        return preview.has_remote
+    return bool(selected and selected.has_remote)
+
+
+def _notice_row(text: str, tone: T.Tone) -> ft.Control:
+    """最近一次提交/推送的结果。浮层只活 3 秒，失败原因得在界面上留一份。"""
+    icon = ft.Icons.CHECK_CIRCLE_OUTLINE if tone is T.Tone.SUCCESS else ft.Icons.ERROR_OUTLINE
+    return ui.surface(
+        padding=T.SPACE_MD,
+        content=ui.hint_row(icon, text, tone=tone),
+    )
+
+
 def _project_pane(projects: list[Project], selected_id: int | None, choose) -> ft.Control:
     return ui.surface(
         expand=True,
@@ -245,8 +285,10 @@ def _commit_pane(
     message: str,
     on_message,
     on_submit,
-    push: bool,
+    will_push: bool,
+    has_remote: bool,
     on_push,
+    notice: tuple[str, T.Tone] | None,
     committing: bool,
 ) -> ft.Control:
     if selected is None:
@@ -267,6 +309,7 @@ def _commit_pane(
         spacing=T.SPACE_MD,
         controls=[
             _repo_panel(selected, preview, loading=loading, error=preview_error),
+            *([_notice_row(*notice)] if notice else []),
             ui.surface(
                 expand=True,
                 content=ft.Column(
@@ -337,10 +380,10 @@ def _commit_pane(
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
                                         ft.Switch(
-                                            label="推送到远程",
-                                            value=push,
+                                            label="推送到所有远程",
+                                            value=will_push,
                                             on_change=lambda e: on_push(bool(ui.event_value(e))),
-                                            disabled=committing or not selected.has_remote,
+                                            disabled=committing or not has_remote,
                                         ),
                                         *(
                                             [
@@ -351,7 +394,7 @@ def _commit_pane(
                                                     dense=True,
                                                 )
                                             ]
-                                            if not selected.has_remote
+                                            if not has_remote
                                             else []
                                         ),
                                     ],
@@ -368,7 +411,7 @@ def _commit_pane(
                                             "提交中…"
                                             if committing
                                             else "提交并推送"
-                                            if push
+                                            if will_push
                                             else "仅提交",
                                             icon=ft.Icons.UPLOAD,
                                             disabled=not can_submit,
@@ -377,6 +420,19 @@ def _commit_pane(
                                     ],
                                 ),
                             ],
+                        ),
+                        *(
+                            [
+                                ui.hint_row(
+                                    ft.Icons.CLOUD_OFF,
+                                    "该仓库没有配置任何远程仓库，提交后无处可推。"
+                                    "可在仓库目录执行 git remote add origin <地址>，"
+                                    "再点右上角「重新探测」。",
+                                    tone=T.Tone.WARNING,
+                                )
+                            ]
+                            if not has_remote
+                            else []
                         ),
                     ],
                 )
@@ -458,7 +514,9 @@ def _repo_panel(
                             else []
                         ),
                         ui.flag_pill(
-                            "已配置远程", bool(status.has_remote if status else project.has_remote)
+                            "已配置远程",
+                            bool(status.has_remote if status else project.has_remote),
+                            bad_label="未配置远程",
                         ),
                     ],
                 ),

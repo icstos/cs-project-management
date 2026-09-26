@@ -25,7 +25,11 @@ from models.dto import Change, Commit, GitStatus, as_local_naive
 _LOG_FORMAT = "%x1e%H%x1f%an%x1f%aI%x1f%s"
 _AHEAD = re.compile(r"ahead (\d+)")
 _BEHIND = re.compile(r"behind (\d+)")
-_NO_UPSTREAM = ("no upstream branch", "no upstream", "has no upstream")
+_NO_UPSTREAM_REASON = "尚未设置上游分支，已自动关联"
+_NON_FAST_FORWARD_REASON = "远程有更新的提交，请先拉取合并再推送"
+_AUTH_REASON = "认证失败，请检查远程仓库的凭据"
+_UNREACHABLE_REASON = "无法访问远程仓库（地址错误或无权限）"
+_MISMATCH_REASON = "上游分支名与本地分支名不一致，已按同名分支推送"
 
 
 class GitError(RuntimeError):
@@ -146,6 +150,12 @@ class GitService:
             raise GitError(result.message)
         return list(_parse_log(result.stdout))
 
+    # ------------------------------------------------------------------ 远程
+    async def remotes(self, repo_path: str) -> list[str]:
+        """已配置的远程名（``git remote`` 按字母序返回，不是配置顺序）。"""
+        result = await self.run(repo_path, "remote")
+        return result.stdout.split() if result.ok else []
+
     # ------------------------------------------------------------------ 提交
     async def commit(
         self,
@@ -154,7 +164,10 @@ class GitService:
         *,
         push: bool = True,
     ) -> tuple[bool, bool, str, GitStatus]:
-        """暂存全部变更 -> 提交 ->（可选）推送，返回 (是否已提交, 是否已推送, 说明, 最新状态)。"""
+        """暂存全部变更 -> 提交 ->（可选）推送，返回 (是否已提交, 是否已推送, 说明, 最新状态)。
+
+        ``已推送`` 的含义是"**所有**远程都推成功"，只推成功一部分时为 False。
+        """
         text = message.strip()
         if not text:
             raise GitError("提交说明不能为空")
@@ -171,34 +184,139 @@ class GitService:
         pushed = False
         detail = "已提交（未推送）"
         if push:
-            if not status.has_remote:
-                detail = "已提交；该仓库未配置远程，已跳过推送"
-            else:
-                pushed, detail = await self._push(repo_path, status)
+            pushed, detail = await self._push(repo_path, status)
 
         return (True, pushed, detail, await self.snapshot(repo_path))
 
     async def _push(self, repo_path: str, status: GitStatus) -> tuple[bool, str]:
-        result = await self.run(repo_path, "push")
-        if result.ok:
-            return (True, "已提交并推送成功")
+        """把当前分支推送到**所有**已配置的远程。
 
-        stderr = result.stderr.lower()
-        if any(token in stderr for token in _NO_UPSTREAM):
-            remotes = (await self.run(repo_path, "remote")).stdout.split()
-            branch = status.branch or "main"
-            if remotes:
-                retry = await self.run(repo_path, "push", "--set-upstream", remotes[0], branch)
-                if retry.ok:
-                    return (True, f"已提交，并把 {branch} 关联到 {remotes[0]}")
-                return (False, f"已提交，但推送失败：{retry.message}")
+        ``git push`` 只认一个上游，多远程仓库必然漏推；因此这里逐个远程显式推送，
+        并显式给出 ``<远程> <本地分支>:<目标分支>`` 引用，绕开 ``push.default``
+        对上游名的挑剔（本地分支名与上游分支名不一致时裸 ``git push`` 会直接报错）。
 
-        return (False, f"已提交，但推送失败：{result.message}")
+        单个远程失败不影响其余远程：失败原因被压成一句人话后参与汇总。
+        """
+        remotes = await self.remotes(repo_path)
+        if not remotes:
+            return (
+                False,
+                "已提交，但该仓库未配置任何远程仓库，无法推送"
+                "（先在仓库目录执行 git remote add origin <地址>，再「重新探测」）",
+            )
+
+        branch = status.branch
+        if not branch:
+            return (False, "已提交，但当前处于游离 HEAD 状态，没有分支可推送")
+
+        upstream = await self._upstream_of(repo_path, branch)
+        tracked_remote, _, tracked_branch = upstream.partition("/")
+
+        succeeded: list[str] = []
+        failed: list[str] = []
+        linked = ""
+
+        for remote in _preferred_first(remotes):
+            target = tracked_branch if remote == tracked_remote and tracked_branch else branch
+            args = ["push"]
+            # 只在还没有上游时建立一次跟踪关系，否则 git status 永远显示不出领先/落后
+            if not upstream and not linked:
+                args.append("--set-upstream")
+            args.append(remote)
+            args.append(f"{branch}:{target}" if target != branch else branch)
+
+            try:
+                result = await self.run(repo_path, *args)
+            except GitError as exc:  # 超时 / git 不可用：不该拖累其余远程
+                failed.append(f"{remote}（{exc}）")
+                continue
+
+            if result.ok:
+                succeeded.append(remote)
+                if not upstream and not linked:
+                    linked = f"{remote}/{target}"
+            else:
+                failed.append(f"{remote}（{_push_reason(result)}）")
+
+        return (not failed, _push_summary(branch, succeeded, failed, linked))
+
+    async def _upstream_of(self, repo_path: str, branch: str) -> str:
+        """当前分支的上游，形如 ``origin/main``；未配置时返回空串。"""
+        result = await self.run(
+            repo_path,
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            f"{branch}@{{upstream}}",
+        )
+        return result.stdout.strip() if result.ok else ""
 
 
 # --------------------------------------------------------------------------- 解析
 def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace").strip()
+
+
+def _preferred_first(remotes: list[str]) -> list[str]:
+    """把 ``origin`` 提到最前。
+
+    ``git remote`` 是字母序，直接用它选上游会挑中 ``backup`` 之类的名字；
+    排在最前会让 ``--set-upstream`` 优先落在约定俗成的 ``origin`` 上，
+    推送到多个远程的顺序则不受影响。
+    """
+    if "origin" in remotes:
+        return ["origin", *(remote for remote in remotes if remote != "origin")]
+    return remotes
+
+
+def _push_reason(result: CommandResult) -> str:
+    """把 git 推送失败的输出压成一句人话，认不出来就退回最后一行原文。"""
+    text = f"{result.stderr}\n{result.stdout}"
+    low = text.lower()
+    reason = ""
+    if "non-fast-forward" in low or "[rejected]" in low:
+        reason = _NON_FAST_FORWARD_REASON
+    elif "no upstream branch" in low:
+        reason = _NO_UPSTREAM_REASON
+    elif "upstream branch of your current" in low:
+        reason = _MISMATCH_REASON
+    elif (
+        "authentication failed" in low
+        or "could not read username" in low
+        or "permission denied" in low
+        or "invalid credentials" in low
+    ):
+        reason = _AUTH_REASON
+    elif "could not read from remote repository" in low or "not appear to be a git repo" in low:
+        reason = _UNREACHABLE_REASON
+
+    if reason:
+        return reason
+    tail = [line.strip() for line in result.message.splitlines() if line.strip()]
+    return tail[-1] if tail else "未知错误"
+
+
+def _push_summary(
+    branch: str,
+    succeeded: list[str],
+    failed: list[str],
+    linked: str,
+) -> str:
+    """推送汇总：成功几个、失败几个、失败分别是什么原因。"""
+    if not succeeded:
+        return "已提交，但推送失败：" + "；".join(failed)
+
+    names = "、".join(succeeded)
+    detail = (
+        f"已提交，并已推送到 {names}"
+        if len(succeeded) == 1
+        else f"已提交，并已推送到 {len(succeeded)} 个远程（{names}）"
+    )
+    if linked:
+        detail += f"，{branch} 已关联 {linked}"
+    if failed:
+        detail += f"；另 {len(failed)} 个失败：{'；'.join(failed)}"
+    return detail
 
 
 def _parse_status(output: str) -> tuple[str, str, int, int, tuple[Change, ...]]:

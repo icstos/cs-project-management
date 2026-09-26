@@ -279,9 +279,19 @@ def pill(
     )
 
 
-def flag_pill(label: str, ok: bool, *, bad_tone: T.Tone = T.Tone.WARNING) -> ft.Container:
+def flag_pill(
+    label: str,
+    ok: bool,
+    *,
+    bad_label: str | None = None,
+    bad_tone: T.Tone = T.Tone.WARNING,
+) -> ft.Container:
+    """状态角标。
+
+    ``bad_label`` 给出否定说法：否则会出现"已配置远程"配一个警告色图标的怪状态。
+    """
     return pill(
-        label,
+        label if ok else (bad_label or label),
         tone=T.Tone.NEUTRAL if ok else bad_tone,
         icon=ft.Icons.CHECK_CIRCLE if ok else ft.Icons.WARNING_AMBER_ROUNDED,
         dense=True,

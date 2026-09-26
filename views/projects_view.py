@@ -518,9 +518,11 @@ def _project_card(
                             if project.branch
                             else []
                         ),
-                        ui.flag_pill("已配置远程", project.has_remote),
-                        ui.flag_pill("工作区干净", project.is_clean),
-                        ui.flag_pill("含 .gitignore", project.has_gitignore),
+                        ui.flag_pill("已配置远程", project.has_remote, bad_label="未配置远程"),
+                        ui.flag_pill("工作区干净", project.is_clean, bad_label="有未提交变更"),
+                        ui.flag_pill(
+                            "含 .gitignore", project.has_gitignore, bad_label="缺少 .gitignore"
+                        ),
                         *(
                             [
                                 ui.pill(
