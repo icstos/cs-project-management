@@ -13,8 +13,10 @@ import flet as ft
 
 from core import theme as T
 from core.config import APP_VERSION
+from services.build_service import BuildService
 from services.project_service import ProjectService
 from views import ui
+from views.build_view import BuildView
 from views.commit_view import CommitView
 from views.guard import guarded
 from views.projects_view import ProjectsView
@@ -26,8 +28,9 @@ _NAV_ITEMS = (
     (ft.Icons.FOLDER_OUTLINED, ft.Icons.FOLDER, "项目"),
     (ft.Icons.COMMIT_OUTLINED, ft.Icons.COMMIT, "提交"),
     (ft.Icons.ANALYTICS_OUTLINED, ft.Icons.ANALYTICS, "统计"),
+    (ft.Icons.ROCKET_LAUNCH_OUTLINED, ft.Icons.ROCKET_LAUNCH, "打包"),
 )
-_SHORTCUT_HINT = "Ctrl+1/2/3 切换 · Ctrl+N 新建 · F5 刷新"
+_SHORTCUT_HINT = "Ctrl+1/2/3/4 切换 · Ctrl+N 新建 · F5 刷新"
 
 
 @guarded
@@ -35,6 +38,7 @@ def AppShell():
     page = ft.context.page
     # use_ref 只在首次渲染时构造一次，既避免重复创建，也保证服务实例不被回收
     service = ft.use_ref(ProjectService).current
+    builder = ft.use_ref(BuildService).current
     picker = ft.use_ref(ft.FilePicker).current
 
     tab_index, set_tab_index = ft.use_state(0)
@@ -92,6 +96,8 @@ def AppShell():
                 set_tab_index(1)
             case (True, "3" | "NUMPAD3"):
                 set_tab_index(2)
+            case (True, "4" | "NUMPAD4"):
+                set_tab_index(3)
             case (True, "N"):
                 open_new_project()
             case (True, "R") | (False, "F5"):
@@ -119,6 +125,12 @@ def AppShell():
                 projects=projects,
                 service=service,
                 picker=picker,
+                busy=loading,
+            )
+        case 3:
+            current = BuildView(
+                projects=projects,
+                service=builder,
                 busy=loading,
             )
         case _:

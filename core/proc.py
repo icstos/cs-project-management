@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -129,6 +130,12 @@ async def run_command(
             *args,
             cwd=None if cwd is None else str(cwd),
             env=None if env is None else dict(env),
+            # 必须给 stdin 一个明确的去处：本应用是窗口程序，没有可交互的控制台，
+            # 继承来的 stdin 要么无效、要么是个永不关闭的管道。命令一旦弹交互确认
+            # （flet build 在 Flutter 校验失败时会问 "Proceed? [y/n]"），
+            # 读 stdin 就会永久阻塞 —— 界面看起来只是"卡住了"，日志也停在半截。
+            # 接 /dev/null 后这类提示会立刻读到 EOF 并失败退出，至少是可见的失败。
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_STREAM_LIMIT,
@@ -176,6 +183,26 @@ async def run_command(
     if timed_out:
         raise CommandTimeout(result.command, timeout or 0.0)
     return result
+
+
+def utf8_env() -> dict[str, str]:
+    """在继承环境的基础上强制子进程用 UTF-8 写输出。
+
+    Python 子进程（flet CLI 就是）默认按系统 ANSI 代码页写 stdout / stderr。
+    rich 在 Windows 上会退到 ``legacy_windows_render``，用同样的代码页编码自己的
+    状态图标 —— ``✅``（U+2705）在 GBK 里没有对应字节，于是整个构建以
+    ``UnicodeEncodeError`` 崩掉，看起来像是"打包莫名其妙失败"：
+
+        UnicodeEncodeError: 'gbk' codec can't encode character '\\u2705'
+
+    ``PYTHONUTF8=1`` 让解释器直接进 UTF-8 模式（连 ``open()`` 的默认编码一起改），
+    ``PYTHONIOENCODING`` 用来兜住"已被别处显式指定编码"的情况 —— 两者都设上才稳。
+    对非 Python 程序（git 等）没有副作用，它们只是多看到两个不认识的环境变量。
+    """
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 # --------------------------------------------------------------------------- 内部
@@ -263,4 +290,5 @@ __all__ = [
     "LineSink",
     "format_command",
     "run_command",
+    "utf8_env",
 ]

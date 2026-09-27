@@ -59,3 +59,42 @@ TREND_DAYS_DEFAULT = 30
 TREND_DAYS_MAX = 30
 REPORT_ROW_LIMIT = 400
 CHANGE_PREVIEW_LIMIT = 200
+
+
+# --------------------------------------------------------------------------- 打包
+def _default_build_root() -> Path:
+    """打包产物的落盘根目录。
+
+    沿用既有的发布目录 ``D:\\Softwares``；其他平台退回用户主目录下的
+    ``Softwares``。环境变量 ``CSPM_BUILD_OUTPUT`` 优先，便于换盘或做隔离验证。
+    """
+    override = os.environ.get("CSPM_BUILD_OUTPUT")
+    if override:
+        return Path(override).expanduser()
+    return Path(r"D:\Softwares") if os.name == "nt" else Path.home() / "Softwares"
+
+
+#: 单个项目的产物目录 = ``BUILD_OUTPUT_ROOT / 源目录名``（例如 D:\Softwares\cs-markdown-editor）
+BUILD_OUTPUT_ROOT = _default_build_root()
+
+#: Flutter bootstrap 模板目录，对应 ``flet build --template``
+BUILD_TEMPLATE_DIR = Path(
+    os.environ.get("CSPM_FLET_TEMPLATE")
+    or BUILD_OUTPUT_ROOT / "flet-template-dir" / "flet-build-template"
+).expanduser()
+
+BUILD_TARGET = "windows"
+BUILD_COMPANY = os.environ.get("CSPM_BUILD_COMPANY", "cstos.com")
+BUILD_COPYRIGHT = os.environ.get("CSPM_BUILD_COPYRIGHT", "ShawnChen")
+BUILD_PYTHON_VERSION = os.environ.get("CSPM_BUILD_PYTHON_VERSION", "3.12")
+
+#: ``--cleanup-app-files`` / ``--cleanup-package-files`` 要清理的中间产物
+BUILD_CLEANUP_GLOBS = ("build",)
+
+#: flet CLI 位置。留空则自动探测（先找当前解释器同目录的 Scripts/flet.exe，再找 PATH）
+FLET_EXECUTABLE_ENV = "CSPM_FLET_EXECUTABLE"
+
+#: 打包很慢（首次构建要下载 Flutter 依赖），超时给足余量
+BUILD_TIMEOUT = 3600.0
+BUILD_CLEAN_TIMEOUT = 300.0
+BUILD_PROBE_TIMEOUT = 60.0

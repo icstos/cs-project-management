@@ -233,3 +233,116 @@ def delete_project_dialog(
             )
         ),
     )
+
+
+# --------------------------------------------------------------------------- 打包
+@dataclass(frozen=True, slots=True)
+class OutputConflict:
+    """产物目录里已有文件：开跑之前需要用户确认是否删除。"""
+
+    path: str
+    files: int
+    size: str
+    top: tuple[str, ...] = ()
+
+
+def output_conflict_dialog(
+    *,
+    conflict: OutputConflict,
+    on_confirm,
+    on_cancel,
+) -> ft.AlertDialog:
+    """产物目录非空时的确认框（对应"提示是否删除"）。"""
+    return ui.confirm_dialog(
+        title_text="产物目录已存在",
+        message=(
+            f"该目录下已有 {conflict.files} 个文件（约 {conflict.size}）。"
+            "继续打包会把新旧文件混在一起，建议先删除再构建。"
+        ),
+        confirm_label="删除并打包",
+        on_confirm=on_confirm,
+        on_cancel=on_cancel,
+        extra=ui.flat_panel(
+            ft.Column(
+                spacing=T.SPACE_XS,
+                tight=True,
+                controls=[
+                    ui.muted(conflict.path, size=11, max_lines=2),
+                    *(
+                        [
+                            ui.muted(
+                                "包含："
+                                + "、".join(conflict.top)
+                                + ("…" if conflict.files > len(conflict.top) else ""),
+                                size=11,
+                                max_lines=2,
+                            )
+                        ]
+                        if conflict.top
+                        else []
+                    ),
+                ],
+            )
+        ),
+    )
+
+
+def output_locked_dialog(
+    *,
+    path: str,
+    reason: str,
+    blocked_path: str,
+    remaining: int,
+    on_retry,
+    on_close,
+) -> ft.AlertDialog:
+    """删除产物目录失败（多半是文件被占用）。"""
+    return ft.AlertDialog(
+        modal=True,
+        title=ft.Row(
+            spacing=T.SPACE_SM,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Icon(ft.Icons.FOLDER_OFF, size=20, color=T.tone_style(T.Tone.DANGER).accent),
+                ft.Text("产物目录删除失败", size=18, weight=ft.FontWeight.W_600),
+            ],
+        ),
+        content=ft.Column(
+            width=T.DIALOG_WIDTH,
+            tight=True,
+            spacing=T.SPACE_MD,
+            controls=[
+                ft.Text(reason, size=13),
+                ui.flat_panel(
+                    ft.Column(
+                        spacing=T.SPACE_XS,
+                        tight=True,
+                        controls=[
+                            ui.muted(path, size=11, max_lines=2),
+                            *(
+                                [ui.muted(f"仍剩 {remaining} 个文件未删除", size=11)]
+                                if remaining
+                                else []
+                            ),
+                            *(
+                                [ui.muted(f"被阻塞：{blocked_path}", size=11, max_lines=3)]
+                                if blocked_path
+                                else []
+                            ),
+                        ],
+                    )
+                ),
+                ui.hint_row(
+                    ft.Icons.LIGHTBULB_OUTLINE,
+                    "最常见的原因是这个目录里的程序还在运行；关掉它（以及停在里面的"
+                    "资源管理器窗口）后点「重试删除」即可。",
+                    tone=T.Tone.WARNING,
+                ),
+            ],
+        ),
+        actions=[
+            ui.text_btn("取消", on_click=on_close),
+            ui.filled("重试删除", icon=ft.Icons.RESTART_ALT, on_click=on_retry),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )

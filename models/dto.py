@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
+from pathlib import Path
 
 
 def as_local_naive(value: datetime) -> datetime:
@@ -283,3 +284,85 @@ class SyncOutcome:
         if self.failures:
             summary += f"，{len(self.failures)} 个失败"
         return summary
+
+
+# --------------------------------------------------------------------------- 打包
+@dataclass(frozen=True, slots=True)
+class BuildPlan:
+    """一次打包的完整参数。
+
+    所有配置都在这里固化，因此 :meth:`build_command` 是纯函数 —— 界面展示的
+    命令行与实际执行的命令行必然一致，不会出现"看到的和跑的不是一条"。
+    """
+
+    project_id: int
+    project_name: str
+    source: str
+    output: str
+    template: str
+    company: str
+    copyright: str
+    python_version: str
+    target: str = "windows"
+    executable: str = "flet"
+    cleanup_globs: tuple[str, ...] = ("build",)
+
+    @property
+    def output_name(self) -> str:
+        """产物目录名（取源目录名，便于和项目文件夹一一对应）。"""
+        return Path(self.output).name
+
+    @property
+    def build_dir(self) -> Path:
+        """flet 在源目录下的构建目录 —— ``flet clean`` 删的就是它。
+
+        名字取自 ``cleanup_globs``（命令里的 ``--cleanup-app-files build``）：
+        两处指同一个目录，必须保持一致。
+        """
+        return Path(self.source) / (self.cleanup_globs[0] if self.cleanup_globs else "build")
+
+    def clean_command(self) -> tuple[str, ...]:
+        """在源目录里清掉上一次构建的 ``build`` 目录。"""
+        return (self.executable, "clean", self.source)
+
+    def build_command(self) -> tuple[str, ...]:
+        """``flet build``。``--artifact`` / ``--product`` 取台账里的项目名称。"""
+        return (
+            self.executable,
+            "build",
+            self.target,
+            self.source,
+            "--artifact",
+            self.project_name,
+            "--cleanup-app",
+            "--cleanup-app-files",
+            *self.cleanup_globs,
+            "--cleanup-package-files",
+            *self.cleanup_globs,
+            "--cleanup-packages",
+            "--company",
+            self.company,
+            "--copyright",
+            self.copyright,
+            "--output",
+            self.output,
+            "--product",
+            self.project_name,
+            "--python-version",
+            self.python_version,
+            "--template",
+            self.template,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BuildOutcome:
+    """一次打包的结果。"""
+
+    ok: bool
+    detail: str
+    command: str = ""
+    output: str = ""
+    artifact: str = ""
+    seconds: float = 0.0
+    lines: int = 0
