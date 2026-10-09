@@ -1,42 +1,53 @@
-"""数据契约与表定义。
+"""模型层：核心数据结构、状态枚举与常量。
 
-``models.database`` 需要显式导入（它会读配置、建引擎），
-因此不在这里转出，避免"导入即建库"的副作用。
+本层不依赖任何其他层，也不含业务逻辑，因此可以被上层任意引用。
+数据库引擎、会话、ORM 实体等**技术实现**不属于这里，它们都在 ``infra``。
 """
 
-from models.dto import (
+from models.dtos import (
+    Blocker,
+    BuildOutcome,
+    BuildPlan,
     Change,
-    ChangeKind,
+    CommandResult,
     Commit,
     CommitOutcome,
     CommitRow,
     GitStatus,
-    Permission,
     Project,
     ProjectTotals,
+    Readiness,
+    RemoveReport,
     Report,
     SyncOutcome,
     Totals,
+    TreeStats,
     TrendPoint,
     as_local_naive,
 )
-from models.entities import CommitEntity, ProjectEntity
+from models.enums import ChangeKind, Permission, Tone
 
 __all__ = [
+    "Blocker",
+    "BuildOutcome",
+    "BuildPlan",
     "Change",
     "ChangeKind",
+    "CommandResult",
     "Commit",
-    "CommitEntity",
     "CommitOutcome",
     "CommitRow",
     "GitStatus",
     "Permission",
     "Project",
-    "ProjectEntity",
     "ProjectTotals",
+    "Readiness",
+    "RemoveReport",
     "Report",
     "SyncOutcome",
+    "Tone",
     "Totals",
+    "TreeStats",
     "TrendPoint",
     "as_local_naive",
 ]
