@@ -49,8 +49,11 @@ def configure_page(page: ft.Page) -> None:
     else:
         logger.warning("本地字体缺失，回退系统默认字体：%s", font_file)
 
-    page.theme_mode = ft.ThemeMode.LIGHT
+    # 浅色为默认主题，深色主题同源注册；二者由外壳上的按钮切换（page.theme_mode）。
+    # 两套 Theme 结构完全一致，只有色板不同，因此界面代码不需要区分明暗。
     page.theme = design.build_theme()
+    page.dark_theme = design.build_dark_theme()
+    page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = ft.Colors.SURFACE
     page.padding = 0
 

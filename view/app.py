@@ -7,6 +7,10 @@
 平台能力（剪贴板、文件选择器）是**页面级服务**，构造即注册到 page，重复构造会
 注册多份，所以在这里用 ``use_ref`` 各创建一次，交给 :class:`FletPlatform` 统一
 分派；四个子页共享这同一套。
+
+唯一一处"视图自己的状态"是明暗模式：它属于展示偏好而非业务数据，因此放在
+``use_state`` 里，不污染视图模型。切换时先把 :func:`view.design.set_dark` 同步给
+令牌层，再让组件重渲染 —— 两次渲染之间整棵树取到的是同一套色板。
 """
 
 from __future__ import annotations
@@ -42,6 +46,11 @@ def AppShell(*, vm: AppViewModel, platform: FletPlatform) -> ft.Control:
     page = ft.context.page
     state = vm.state
 
+    # 明暗模式是纯展示偏好，放在组件本地状态里；每次渲染都把亮度同步给令牌层，
+    # 保证 tone_style / card_shadow 这类 Python 侧查表与客户端解析出来的角色色一致。
+    dark, set_dark_state = ft.use_state(False)
+    T.set_dark(dark)
+
     # 钩子的数量与顺序必须在每次渲染中保持一致，因此全部集中在顶部无条件调用。
     use_notices(page, vm)
     use_shortcuts(page, vm)
@@ -61,12 +70,18 @@ def AppShell(*, vm: AppViewModel, platform: FletPlatform) -> ft.Control:
                 on_refresh=vm.request_refresh,
             )
 
+    def toggle_theme(_=None) -> None:
+        """切换深浅色：先同步令牌层与页面主题，再触发一次重渲染。"""
+        next_dark = not dark
+        T.set_dark(next_dark)
+        page.theme_mode = ft.ThemeMode.DARK if next_dark else ft.ThemeMode.LIGHT
+        set_dark_state(next_dark)
+
     return ft.Row(
         spacing=0,
         expand=True,
         controls=[
-            _sidebar(state, vm),
-            widgets.divider(vertical=True),
+            _sidebar(state, vm, dark=dark, on_toggle_theme=toggle_theme),
             ft.Column(
                 expand=True,
                 spacing=0,
@@ -81,20 +96,25 @@ def AppShell(*, vm: AppViewModel, platform: FletPlatform) -> ft.Control:
 
 
 # --------------------------------------------------------------------------- 侧栏
-def _sidebar(state: AppState, vm: AppViewModel) -> ft.Container:
+def _sidebar(state: AppState, vm: AppViewModel, *, dark: bool, on_toggle_theme) -> ft.Container:
     destinations = [
         ft.NavigationRailDestination(icon=icon, selected_icon=selected, label=tab.label)
         for tab, icon, selected in _NAV_ITEMS
     ]
     selected_index = next((i for i, (tab, _, _) in enumerate(_NAV_ITEMS) if tab is state.tab), 0)
 
+    # 侧栏与页面同色、只用一条发丝线分隔：视觉上"通透"，把注意力留给内容。
     return ft.Container(
+        width=T.SIDEBAR_WIDTH,
         bgcolor=T.SHELL_COLOR,
+        border=ft.Border.only(right=ft.BorderSide(1, T.BORDER_COLOR)),
         content=ft.Column(
             expand=True,
             spacing=0,
             controls=[
                 _brand(),
+                # ⚠️ 指示块与标签样式必须写在控件上：flet 1.0 的客户端不会从
+                # NavigationRailTheme 取这几项（实测：设置主题后仍是默认蓝）。
                 ft.NavigationRail(
                     expand=True,
                     selected_index=selected_index,
@@ -102,8 +122,20 @@ def _sidebar(state: AppState, vm: AppViewModel) -> ft.Container:
                     label_type=ft.NavigationRailLabelType.ALL,
                     use_indicator=True,
                     bgcolor=ft.Colors.TRANSPARENT,
+                    elevation=0,
+                    indicator_color=ft.Colors.PRIMARY_CONTAINER,
+                    indicator_shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
+                    selected_label_text_style=T.text_style(
+                        11,
+                        weight=ft.FontWeight.W_600,
+                        color=ft.Colors.ON_PRIMARY_CONTAINER,
+                    ),
+                    unselected_label_text_style=T.text_style(
+                        11, weight=ft.FontWeight.W_500, color=T.MUTED_TEXT
+                    ),
+                    pin_trailing_to_bottom=True,
                     destinations=destinations,
-                    trailing=_sidebar_footer(state, vm),
+                    trailing=_sidebar_footer(state, vm, dark=dark, on_toggle_theme=on_toggle_theme),
                     on_change=lambda event: vm.select_tab(_nav_target(event)),
                 ),
             ],
@@ -112,44 +144,71 @@ def _sidebar(state: AppState, vm: AppViewModel) -> ft.Container:
 
 
 def _brand() -> ft.Container:
+    """品牌区：微渐变圆角标 + 小字标识，克制但有记忆点。"""
     return ft.Container(
-        padding=ft.Padding.only(top=T.SPACE_LG, bottom=T.SPACE_SM),
+        padding=ft.Padding.only(top=T.SPACE_XL, bottom=T.SPACE_MD),
         alignment=ft.Alignment.CENTER,
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_SM,
             tight=True,
             controls=[
                 ft.Container(
-                    width=42,
-                    height=42,
-                    border_radius=T.RADIUS_MD,
-                    bgcolor=ft.Colors.PRIMARY,
+                    width=40,
+                    height=40,
+                    border_radius=T.RADIUS_LG,
+                    gradient=T.brand_gradient(),
                     alignment=ft.Alignment.CENTER,
-                    content=ft.Icon(ft.Icons.TERMINAL, color=ft.Colors.ON_PRIMARY, size=22),
+                    shadow=T.card_shadow(),
+                    content=ft.Icon(ft.Icons.TERMINAL, color="#FFFFFF", size=21),
                 ),
-                ft.Text("CS PM", size=11, weight=ft.FontWeight.W_700, color=T.MUTED_TEXT),
+                T.text(
+                    "CS PM",
+                    level=T.TextLevel.CAPTION,
+                    size=11,
+                    weight=ft.FontWeight.W_700,
+                    color=T.MUTED_TEXT,
+                ),
             ],
         ),
     )
 
 
-def _sidebar_footer(state: AppState, vm: AppViewModel) -> ft.Container:
+def _sidebar_footer(
+    state: AppState, vm: AppViewModel, *, dark: bool, on_toggle_theme
+) -> ft.Container:
     return ft.Container(
-        padding=ft.Padding.only(bottom=T.SPACE_MD),
+        padding=ft.Padding.only(bottom=T.SPACE_LG),
         alignment=ft.Alignment.CENTER,
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_SM,
             tight=True,
             controls=[
-                widgets.icon_action(
-                    ft.Icons.SYNC,
-                    "刷新全部仓库状态（F5）",
-                    lambda _: vm.request_refresh(),
-                    disabled=state.loading,
+                ft.Row(
+                    spacing=0,
+                    tight=True,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    controls=[
+                        widgets.icon_action(
+                            ft.Icons.SYNC,
+                            "刷新全部仓库状态（F5）",
+                            lambda _: vm.request_refresh(),
+                            disabled=state.loading,
+                        ),
+                        widgets.icon_action(
+                            ft.Icons.LIGHT_MODE_OUTLINED if dark else ft.Icons.DARK_MODE_OUTLINED,
+                            "切换到浅色模式" if dark else "切换到深色模式",
+                            on_toggle_theme,
+                        ),
+                    ],
                 ),
-                ft.Text(f"v{APP_VERSION}", size=10, color=T.MUTED_TEXT),
+                T.text(
+                    f"v{APP_VERSION}",
+                    level=T.TextLevel.CAPTION,
+                    size=10,
+                    color=T.MUTED_TEXT,
+                ),
             ],
         ),
     )
@@ -181,7 +240,7 @@ def _status_item(icon: str, text: str, *, tone: Tone = Tone.NEUTRAL) -> ft.Row:
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         controls=[
             ft.Icon(icon, size=14, color=T.tone_style(tone).accent),
-            ft.Text(text, size=11, color=T.MUTED_TEXT),
+            T.text(text, level=T.TextLevel.CAPTION, size=11, color=T.MUTED_TEXT),
         ],
     )
 
@@ -224,9 +283,10 @@ def _status_bar(state: AppState, vm: AppViewModel) -> ft.Container:
         spacing=T.SPACE_MD,
         tight=True,
         controls=[
-            ft.Text(
+            T.text(
                 state.progress
                 or (f"更新于 {format_relative(state.refreshed_at)}" if state.refreshed_at else ""),
+                level=T.TextLevel.CAPTION,
                 size=11,
                 color=T.MUTED_TEXT,
             ),
@@ -246,9 +306,14 @@ def _status_bar(state: AppState, vm: AppViewModel) -> ft.Container:
             spacing=0,
             tight=True,
             controls=[
-                ft.ProgressBar(visible=state.loading, height=2, border_radius=0),
+                # 进度条只在真正加载时出现，占满整条状态栏宽度，不挤压其他信息
+                ft.ProgressBar(
+                    visible=state.loading,
+                    height=2,
+                    border_radius=0,
+                ),
                 ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=T.SPACE_LG, vertical=T.SPACE_XS),
+                    padding=ft.Padding.symmetric(horizontal=T.SPACE_LG, vertical=T.SPACE_SM),
                     content=ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,

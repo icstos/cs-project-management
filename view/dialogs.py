@@ -3,6 +3,9 @@
 都是纯函数：接收当前状态、返回 ``ft.AlertDialog``；由持有状态的视图通过
 ``ft.use_dialog`` 渲染，因此对话框内容随状态实时刷新。所有回调都把意图报给视图模型，
 这里不做任何判断。
+
+对话框统一走 :func:`view.widgets.confirm_dialog` 或同一套头部结构（圆角色块图标 +
+标题 + 副标题），保证"弹出来的东西"看起来是同一个系统里的。
 """
 
 from __future__ import annotations
@@ -26,6 +29,39 @@ __all__ = [
 _PERMISSION_HINT = "公开项目会在报表中标注为可共享；私有项目仅本机可见。"
 # 空态与"核验中"共用一句话：两种情况都成立，用户继续输入时也不会看到误导性的报错
 _PATH_PENDING_HINT = "粘贴路径后会自动核验是否为 Git 仓库"
+
+
+def _dialog_title(icon: str, title_text: str, subtitle: str, *, tone: Tone = Tone.PRIMARY):
+    """对话框统一的头部：语义色圆角图标 + 标题 + 副标题。"""
+    style = T.tone_style(tone)
+    return ft.Row(
+        spacing=T.SPACE_MD,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        controls=[
+            ft.Container(
+                width=36,
+                height=36,
+                border_radius=T.RADIUS_MD,
+                bgcolor=style.container,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Icon(icon, size=18, color=style.accent),
+            ),
+            ft.Column(
+                spacing=0,
+                tight=True,
+                expand=True,
+                controls=[
+                    T.text(
+                        title_text,
+                        level=T.TextLevel.TITLE,
+                        size=17,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    widgets.muted(subtitle, size=12, max_lines=2),
+                ],
+            ),
+        ],
+    )
 
 
 def _path_hint(draft: ProjectDraft) -> ft.Control:
@@ -63,40 +99,14 @@ def project_form_dialog(
 
     return ft.AlertDialog(
         modal=True,
-        title=ft.Row(
-            spacing=T.SPACE_SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Container(
-                    width=34,
-                    height=34,
-                    border_radius=T.RADIUS_MD,
-                    bgcolor=ft.Colors.PRIMARY_CONTAINER,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Icon(
-                        ft.Icons.EDIT_OUTLINED if draft.is_edit else ft.Icons.ADD,
-                        size=18,
-                        color=ft.Colors.ON_PRIMARY_CONTAINER,
-                    ),
-                ),
-                ft.Column(
-                    spacing=0,
-                    tight=True,
-                    controls=[
-                        ft.Text(
-                            "编辑项目" if draft.is_edit else "添加项目",
-                            size=18,
-                            weight=ft.FontWeight.W_600,
-                        ),
-                        widgets.muted(
-                            "修改配置后会自动重新探测仓库状态"
-                            if draft.is_edit
-                            else "粘贴路径或选择一个本地 Git 仓库纳入管理",
-                            size=12,
-                        ),
-                    ],
-                ),
-            ],
+        bgcolor=T.CARD_COLOR,
+        shape=ft.RoundedRectangleBorder(radius=T.RADIUS_DIALOG),
+        title=_dialog_title(
+            ft.Icons.EDIT_OUTLINED if draft.is_edit else ft.Icons.ADD,
+            "编辑项目" if draft.is_edit else "添加项目",
+            "修改配置后会自动重新探测仓库状态"
+            if draft.is_edit
+            else "粘贴路径或选择一个本地 Git 仓库纳入管理",
         ),
         content=ft.Column(
             width=T.DIALOG_WIDTH,
@@ -110,6 +120,8 @@ def project_form_dialog(
                     value=draft.name,
                     autofocus=True,
                     border=T.field_border(),
+                    fill_color=widgets.field_fill(),
+                    filled=True,
                     on_change=lambda e: on_name(widgets.event_value(e) or ""),
                     on_submit=lambda _: on_save() if can_save else None,
                 ),
@@ -123,6 +135,8 @@ def project_form_dialog(
                             value=draft.local_path,
                             expand=True,
                             border=T.field_border(),
+                            fill_color=widgets.field_fill(),
+                            filled=True,
                             prefix_icon=ft.Icons.FOLDER_OUTLINED,
                             hint_text=r"粘贴路径，如 D:\Projects\my-repo",
                             # 输入途中只清理明显的粘贴痕迹（见视图模型 change_path）
@@ -152,6 +166,8 @@ def project_form_dialog(
                     label="可见性",
                     value=draft.permission.value,
                     border=T.field_border(),
+                    fill_color=widgets.field_fill(),
+                    filled=True,
                     options=[
                         ft.dropdown.Option(Permission.PUBLIC.value, Permission.PUBLIC.label),
                         ft.dropdown.Option(Permission.PRIVATE.value, Permission.PRIVATE.label),
@@ -253,20 +269,20 @@ def output_locked_dialog(
     """删除产物目录失败（多半是文件被占用）。"""
     return ft.AlertDialog(
         modal=True,
-        title=ft.Row(
-            spacing=T.SPACE_SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Icon(ft.Icons.FOLDER_OFF, size=20, color=T.tone_style(Tone.DANGER).accent),
-                ft.Text("产物目录删除失败", size=18, weight=ft.FontWeight.W_600),
-            ],
+        bgcolor=T.CARD_COLOR,
+        shape=ft.RoundedRectangleBorder(radius=T.RADIUS_DIALOG),
+        title=_dialog_title(
+            ft.Icons.FOLDER_OFF,
+            "产物目录删除失败",
+            "文件可能正被其他程序占用",
+            tone=Tone.DANGER,
         ),
         content=ft.Column(
             width=T.DIALOG_WIDTH,
             tight=True,
             spacing=T.SPACE_MD,
             controls=[
-                ft.Text(failure.reason, size=13),
+                T.text(failure.reason, level=T.TextLevel.BODY),
                 widgets.flat_panel(
                     ft.Column(
                         spacing=T.SPACE_XS,

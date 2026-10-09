@@ -3,6 +3,9 @@
 视图只做两件事：**读取状态渲染** 和 **把用户动作交给视图模型**。
 过滤与排序的结果由状态自身派生（``state.visible``），因此界面永远不会出现
 "筛了但没生效"的中间态。
+
+卡片是页面里最重的视觉元素，因此承担了"悬停轻微抬起"的反馈：悬停中的卡片 id
+放在组件本地 ``use_state`` 里，只有投影变化，不触碰任何业务状态。
 """
 
 from __future__ import annotations
@@ -25,7 +28,9 @@ from view.view_platform import (
 from viewmodel.formatting import format_relative
 from viewmodel.projects_vm import ProjectFilter, ProjectsViewModel, SortKey
 
+#: 12 列栅格：手机一列、中等窗口两列、宽窗口三列
 CARD_COL = {"xs": 12, "md": 6, "xl": 4}
+_SKELETON_CARDS = 6
 
 
 @guarded
@@ -39,6 +44,9 @@ def ProjectsView(
     state = vm.state
     use_notices(page, vm)
     use_platform_requests(platform, vm)
+
+    # 悬停中的卡片 id —— 纯展示状态，用来把投影从"静止"抬到"悬停"
+    hovered, set_hovered = ft.use_state(None)
 
     # 路径一变就核验一次：手输、粘贴、浏览选目录、打开编辑对话框都汇到这里。
     # 核验本身在线程池里跑（断开的网络盘会让 exists() 阻塞数秒）。
@@ -86,10 +94,17 @@ def ProjectsView(
         ),
         body=ft.Column(
             expand=True,
-            spacing=T.SPACE_MD,
+            spacing=T.SPACE_LG,
             controls=[
                 _toolbar(state=state, vm=vm),
-                _body(page=page, vm=vm),
+                _body(
+                    page=page,
+                    vm=vm,
+                    hovered=hovered,
+                    on_hover=lambda project, entering: set_hovered(
+                        project.id if entering else None
+                    ),
+                ),
             ],
         ),
     )
@@ -103,7 +118,7 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
     # 注意：Row(wrap=True) 的子项不能带 expand（Flutter 会因父数据不匹配而报错），
     # 所以把「需要吃掉剩余宽度」的元素放在不换行的第一行。
     return ft.Column(
-        spacing=T.SPACE_SM,
+        spacing=T.SPACE_MD,
         tight=True,
         controls=[
             ft.Row(
@@ -111,45 +126,54 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Container(
-                        width=300,
+                        width=320,
                         content=ft.TextField(
                             key="project-search",
                             hint_text="搜索名称或路径",
                             prefix_icon=ft.Icons.SEARCH,
                             value=state.query,
                             border=T.field_border(),
+                            fill_color=widgets.field_fill(),
                             dense=True,
+                            filled=True,
                             expand=True,
                             on_change=lambda e: vm.set_query(widgets.event_value(e) or ""),
                         ),
                     ),
                     *(
                         [
-                            ft.IconButton(
-                                icon=ft.Icons.CLOSE,
-                                tooltip="清空搜索",
-                                icon_size=18,
-                                on_click=lambda _: vm.clear_query(),
+                            widgets.icon_action(
+                                ft.Icons.CLOSE,
+                                "清空搜索",
+                                lambda _: vm.clear_query(),
+                                size=16,
                             )
                         ]
                         if state.query
                         else []
                     ),
                     ft.Container(expand=True),
-                    ft.Text(
+                    T.text(
                         f"显示 {matched}/{len(projects)} 个"
                         if state.filtered
                         else f"共 {len(projects)} 个项目",
+                        level=T.TextLevel.CAPTION,
                         size=11,
                         color=T.MUTED_TEXT,
                     ),
-                    ft.Dropdown(
-                        width=150,
-                        value=state.sort_key.value,
-                        dense=True,
-                        border=T.field_border(),
-                        options=[ft.dropdown.Option(item.value, item.label) for item in SortKey],
-                        on_select=lambda e: vm.set_sort(SortKey(widgets.event_value(e))),
+                    ft.Container(
+                        width=156,
+                        content=ft.Dropdown(
+                            value=state.sort_key.value,
+                            dense=True,
+                            filled=True,
+                            fill_color=widgets.field_fill(),
+                            border=T.field_border(),
+                            options=[
+                                ft.dropdown.Option(item.value, item.label) for item in SortKey
+                            ],
+                            on_select=lambda e: vm.set_sort(SortKey(widgets.event_value(e))),
+                        ),
                     ),
                 ],
             ),
@@ -158,10 +182,9 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
                 run_spacing=T.SPACE_SM,
                 wrap=True,
                 controls=[
-                    ft.Chip(
-                        label=ft.Text(f"{item.label} {counts[item]}"),
+                    widgets.filter_chip(
+                        f"{item.label} {counts[item]}",
                         selected=state.active_filter is item,
-                        show_checkmark=False,
                         on_select=lambda _, target=item: vm.set_filter(target),
                     )
                     for item in ProjectFilter
@@ -171,10 +194,15 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
     )
 
 
-def _body(*, page: ft.Page, vm: ProjectsViewModel) -> ft.Control:
+def _body(*, page: ft.Page, vm: ProjectsViewModel, hovered, on_hover) -> ft.Control:
     state = vm.state
     if state.busy and not state.projects:
-        return widgets.busy_block("正在读取项目列表…")
+        # 骨架屏：结构与真实卡片一致，避免首屏出现大片空白
+        return ft.ResponsiveRow(
+            spacing=T.GRID_GUTTER,
+            run_spacing=T.GRID_GUTTER,
+            controls=[widgets.skeleton_card(col=CARD_COL) for _ in range(_SKELETON_CARDS)],
+        )
     if not state.projects:
         return widgets.empty_state(
             ft.Icons.FOLDER_OFF,
@@ -194,16 +222,18 @@ def _body(*, page: ft.Page, vm: ProjectsViewModel) -> ft.Control:
     return ft.Column(
         expand=True,
         scroll=ft.ScrollMode.AUTO,
-        spacing=T.SPACE_MD,
+        spacing=T.GRID_GUTTER,
         controls=[
             ft.ResponsiveRow(
-                spacing=T.SPACE_MD,
-                run_spacing=T.SPACE_MD,
+                spacing=T.GRID_GUTTER,
+                run_spacing=T.GRID_GUTTER,
                 controls=[
                     _project_card(
                         page=page,
                         vm=vm,
                         project=project,
+                        hovered=hovered == project.id,
+                        on_hover=on_hover,
                     )
                     for project in state.visible
                 ],
@@ -212,20 +242,34 @@ def _body(*, page: ft.Page, vm: ProjectsViewModel) -> ft.Control:
     )
 
 
-def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> ft.Container:
+def _project_card(
+    *,
+    page: ft.Page,
+    vm: ProjectsViewModel,
+    project: Project,
+    hovered: bool,
+    on_hover,
+) -> ft.Container:
     warnings = project.warnings
     dirty_text = f"{project.changed_files} 个文件待提交" if project.changed_files else "工作区干净"
     refreshing = vm.state.busy_project == project.id
 
+    def handle_hover(event) -> None:
+        entering = str(widgets.event_value(event)).lower() == "true"
+        on_hover(project, entering)
+
     return widgets.surface(
         col=CARD_COL,
         key=f"project-{project.id}",
+        hovered=hovered,
+        on_hover=handle_hover,
         content=ft.Column(
-            spacing=T.SPACE_SM,
+            spacing=T.SPACE_MD,
             tight=True,
             controls=[
+                # ---- 标题行：名称 / 路径 / 可见性
                 ft.Row(
-                    spacing=T.SPACE_SM,
+                    spacing=T.SPACE_MD,
                     vertical_alignment=ft.CrossAxisAlignment.START,
                     controls=[
                         ft.Column(
@@ -233,9 +277,10 @@ def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> 
                             tight=True,
                             expand=True,
                             controls=[
-                                ft.Text(
+                                T.text(
                                     project.name,
-                                    size=16,
+                                    level=T.TextLevel.TITLE,
+                                    size=15,
                                     weight=ft.FontWeight.W_600,
                                     max_lines=1,
                                     overflow=ft.TextOverflow.ELLIPSIS,
@@ -246,6 +291,7 @@ def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> 
                         widgets.permission_pill(project.permission),
                     ],
                 ),
+                # ---- 状态角标组
                 ft.Row(
                     spacing=T.SPACE_SM,
                     wrap=True,
@@ -295,13 +341,14 @@ def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> 
                                 "；".join(warnings),
                                 tone=Tone.WARNING,
                             ),
-                            padding=T.SPACE_SM,
+                            padding=T.SPACE_MD,
                         )
                     ]
                     if warnings
                     else []
                 ),
                 widgets.divider(),
+                # ---- 页脚：变更摘要 + 行内操作
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -310,8 +357,9 @@ def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> 
                             spacing=0,
                             tight=True,
                             controls=[
-                                ft.Text(
+                                T.text(
                                     dirty_text,
+                                    level=T.TextLevel.LABEL,
                                     size=12,
                                     color=(
                                         T.tone_style(Tone.WARNING).accent
@@ -342,6 +390,9 @@ def _project_card(*, page: ft.Page, vm: ProjectsViewModel, project: Project) -> 
                                 ),
                                 ft.PopupMenuButton(
                                     tooltip="更多操作",
+                                    icon=ft.Icons.MORE_VERT,
+                                    icon_size=T.ICON_MD,
+                                    icon_color=T.MUTED_TEXT,
                                     items=[
                                         ft.PopupMenuItem(
                                             content=ft.Text("在文件管理器中打开"),

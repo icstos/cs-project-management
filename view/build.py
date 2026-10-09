@@ -6,6 +6,9 @@
 * 「将要执行的步骤」与真正跑的命令同源，看到的必然是真跑的；
 * 控制台按固定间隔合并刷新，被截掉的部分在日志文件里有完整记录；
 * 产物目录非空、删除被占用等需要用户决策的时刻，各弹各的框。
+
+控制台是这一页的视觉重心：它固定用深色底 + 等宽字体，和周围的浅卡片刻意拉开，
+让人一眼分清"界面"与"机器输出"。
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from viewmodel.build_vm import BuildState, BuildViewModel
 from viewmodel.formatting import human_bytes
 
 _PANE_WIDTH = 320
+_MONO_FALLBACK = ["Consolas", "Cascadia Mono", "monospace"]
 
 
 @guarded
@@ -100,7 +104,7 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ft.Control:
         ),
         body=ft.Row(
             expand=True,
-            spacing=T.SPACE_MD,
+            spacing=T.SPACE_LG,
             vertical_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
                 ft.Container(width=_PANE_WIDTH, content=_project_pane(state, vm)),
@@ -108,7 +112,7 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ft.Control:
                     expand=True,
                     content=ft.Column(
                         expand=True,
-                        spacing=T.SPACE_MD,
+                        spacing=T.SPACE_LG,
                         controls=[
                             _target_panel(state),
                             _command_panel(state.steps),
@@ -122,28 +126,32 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ft.Control:
     )
 
 
-# --------------------------------------------------------------------------- 构件
+# --------------------------------------------------------------------------- 左栏
 def _project_pane(state: BuildState, vm: BuildViewModel) -> ft.Control:
     return widgets.surface(
         expand=True,
-        padding=T.SPACE_SM,
+        padding=T.SPACE_MD,
         content=ft.Column(
             expand=True,
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_SM,
             controls=[
-                ft.Container(
-                    padding=ft.Padding.only(left=T.SPACE_SM, top=T.SPACE_XS, bottom=T.SPACE_XS),
-                    content=ft.Row(
-                        controls=[
-                            ft.Text("选择项目", size=13, weight=ft.FontWeight.W_600),
-                            ft.Container(expand=True),
-                            widgets.pill(str(len(state.projects)), dense=True),
-                        ]
-                    ),
+                ft.Row(
+                    spacing=T.SPACE_SM,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        T.text(
+                            "选择项目",
+                            level=T.TextLevel.LABEL,
+                            weight=ft.FontWeight.W_600,
+                            color=T.MUTED_TEXT,
+                        ),
+                        ft.Container(expand=True),
+                        widgets.pill(str(len(state.projects)), dense=True),
+                    ],
                 ),
                 ft.ListView(
                     expand=True,
-                    spacing=T.SPACE_XXS,
+                    spacing=T.SPACE_XS,
                     controls=[
                         _project_tile(
                             project,
@@ -168,32 +176,44 @@ def _project_tile(
     locked: bool,
     on_click,
 ) -> ft.Container:
-    tone = T.tone_style(Tone.PRIMARY)
     return ft.Container(
         key=f"build-project-{project.id}",
         on_click=None if locked else lambda _: on_click(project),
         border_radius=T.RADIUS_MD,
         padding=ft.Padding.symmetric(horizontal=T.SPACE_MD, vertical=T.SPACE_SM),
-        bgcolor=tone.container if active else ft.Colors.TRANSPARENT,
-        border=ft.Border.all(1, tone.accent if active else ft.Colors.TRANSPARENT),
-        opacity=1.0 if not locked or active else 0.6,
+        bgcolor=ft.Colors.PRIMARY_CONTAINER if active else ft.Colors.TRANSPARENT,
+        border=ft.Border.only(
+            left=ft.BorderSide(3, ft.Colors.PRIMARY if active else ft.Colors.TRANSPARENT)
+        ),
+        ink=not locked,
+        ink_color=ft.Colors.with_opacity(0.06, ft.Colors.PRIMARY),
+        opacity=1.0 if not locked or active else 0.55,
+        animate=T.animate(duration=T.DURATION_FAST),
         content=ft.Column(
             spacing=T.SPACE_XXS,
             tight=True,
             controls=[
-                ft.Text(
+                T.text(
                     project.name,
-                    size=13,
+                    level=T.TextLevel.BODY,
                     weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_500,
+                    color=ft.Colors.ON_PRIMARY_CONTAINER if active else None,
                     max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS,
                 ),
-                widgets.muted(output_name, size=11),
+                T.text(
+                    output_name,
+                    level=T.TextLevel.CAPTION,
+                    color=ft.Colors.ON_PRIMARY_CONTAINER if active else T.MUTED_TEXT,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                ),
             ],
         ),
     )
 
 
+# --------------------------------------------------------------------------- 右栏
 def _target_panel(state: BuildState) -> ft.Control:
     plan = state.plan
     if plan is None:
@@ -229,25 +249,47 @@ def _target_panel(state: BuildState) -> ft.Control:
 
     return widgets.surface(
         content=ft.Column(
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_MD,
             tight=True,
             controls=[
                 ft.Row(
                     spacing=T.SPACE_SM,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Icon(ft.Icons.ROCKET_LAUNCH_OUTLINED, size=17, color=ft.Colors.PRIMARY),
-                        ft.Text(plan.project_name, size=14, weight=ft.FontWeight.W_600),
+                        ft.Container(
+                            width=30,
+                            height=30,
+                            border_radius=T.RADIUS_SM,
+                            bgcolor=T.tone_style(Tone.PRIMARY).container,
+                            alignment=ft.Alignment.CENTER,
+                            content=ft.Icon(
+                                ft.Icons.ROCKET_LAUNCH_OUTLINED,
+                                size=16,
+                                color=T.tone_style(Tone.PRIMARY).accent,
+                            ),
+                        ),
+                        T.text(
+                            plan.project_name,
+                            level=T.TextLevel.TITLE,
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                        ),
                         ft.Container(expand=True),
                         _output_pill(state.output_state, occupied),
                     ],
                 ),
-                _path_row(ft.Icons.DESCRIPTION_OUTLINED, "源目录", plan.source),
-                _path_row(
-                    ft.Icons.INVENTORY_2_OUTLINED,
-                    "产物目录",
-                    plan.output,
-                    tone=Tone.WARNING if occupied else Tone.NEUTRAL,
+                ft.Column(
+                    spacing=T.SPACE_XS,
+                    tight=True,
+                    controls=[
+                        _path_row(ft.Icons.DESCRIPTION_OUTLINED, "源目录", plan.source),
+                        _path_row(
+                            ft.Icons.INVENTORY_2_OUTLINED,
+                            "产物目录",
+                            plan.output,
+                            tone=Tone.WARNING if occupied else Tone.NEUTRAL,
+                        ),
+                    ],
                 ),
                 ft.Row(
                     spacing=T.SPACE_SM,
@@ -300,8 +342,14 @@ def _path_row(icon: str, label: str, value: str, *, tone: Tone = Tone.NEUTRAL) -
         spacing=T.SPACE_SM,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         controls=[
-            ft.Icon(icon, size=15, color=T.tone_style(tone).accent),
-            ft.Text(label, size=12, color=T.MUTED_TEXT),
+            ft.Icon(icon, size=T.ICON_SM, color=T.tone_style(tone).accent),
+            T.text(
+                label,
+                level=T.TextLevel.CAPTION,
+                size=12,
+                color=T.MUTED_TEXT,
+                width=64,
+            ),
             ft.Text(
                 value,
                 size=12,
@@ -310,6 +358,7 @@ def _path_row(icon: str, label: str, value: str, *, tone: Tone = Tone.NEUTRAL) -
                 overflow=ft.TextOverflow.ELLIPSIS,
                 tooltip=value,
                 selectable=True,
+                font_family=T.FONT_FAMILY,
             ),
         ],
     )
@@ -321,31 +370,58 @@ def _command_panel(steps: tuple[str, ...]) -> ft.Control:
 
     return widgets.surface(
         content=ft.Column(
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_MD,
             tight=True,
             controls=[
                 ft.Row(
                     spacing=T.SPACE_SM,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Text("将要执行的步骤", size=13, weight=ft.FontWeight.W_600),
+                        T.text(
+                            "将要执行的步骤",
+                            level=T.TextLevel.TITLE,
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                        ),
                         ft.Container(expand=True),
                         widgets.muted("可选中复制", size=11),
                     ],
                 ),
                 widgets.flat_panel(
                     ft.Column(
-                        spacing=T.SPACE_XXS,
+                        spacing=T.SPACE_SM,
                         tight=True,
                         controls=[
-                            ft.Text(
-                                command,
-                                size=11,
-                                selectable=True,
-                                font_family=T.FONT_FAMILY,
-                                font_family_fallback=["Consolas", "monospace"],
+                            ft.Row(
+                                spacing=T.SPACE_SM,
+                                vertical_alignment=ft.CrossAxisAlignment.START,
+                                controls=[
+                                    ft.Container(
+                                        width=20,
+                                        height=20,
+                                        border_radius=T.RADIUS_XS,
+                                        bgcolor=T.CARD_COLOR,
+                                        border=ft.Border.all(1, T.BORDER_COLOR),
+                                        alignment=ft.Alignment.CENTER,
+                                        content=T.text(
+                                            str(index),
+                                            level=T.TextLevel.CAPTION,
+                                            size=10,
+                                            weight=ft.FontWeight.W_700,
+                                            color=T.MUTED_TEXT,
+                                        ),
+                                    ),
+                                    ft.Text(
+                                        command,
+                                        size=11,
+                                        expand=True,
+                                        selectable=True,
+                                        font_family=T.FONT_FAMILY,
+                                        font_family_fallback=_MONO_FALLBACK,
+                                    ),
+                                ],
                             )
-                            for command in steps
+                            for index, command in enumerate(steps, start=1)
                         ],
                     ),
                     padding=T.SPACE_MD,
@@ -396,13 +472,21 @@ def _console_panel(state: BuildState) -> ft.Control:
         expand=True,
         content=ft.Column(
             expand=True,
-            spacing=T.SPACE_SM,
+            spacing=T.SPACE_MD,
             controls=[
+                # 注意：这一行里有 expand 的占位块，因此**不能**用 wrap=True
+                # （Wrap 不是 Flex，子项带 expand 会被 Flutter 判为 ParentDataWidget 错误，
+                #  release 客户端只会画出一个灰块，什么错误都看不到）。
                 ft.Row(
                     spacing=T.SPACE_SM,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Text("构建输出", size=13, weight=ft.FontWeight.W_600),
+                        T.text(
+                            "构建输出",
+                            level=T.TextLevel.TITLE,
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                        ),
                         *(
                             [ft.ProgressRing(width=14, height=14, stroke_width=2)]
                             if state.running
@@ -425,7 +509,7 @@ def _console_panel(state: BuildState) -> ft.Control:
                 ft.Container(
                     expand=True,
                     border_radius=T.RADIUS_MD,
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+                    bgcolor=T.CONSOLE_BG,
                     border=ft.Border.all(1, T.BORDER_COLOR),
                     padding=T.SPACE_MD,
                     content=ft.ListView(
@@ -437,8 +521,8 @@ def _console_panel(state: BuildState) -> ft.Control:
                                 size=11,
                                 selectable=True,
                                 font_family=T.FONT_FAMILY,
-                                font_family_fallback=["Consolas", "monospace"],
-                                color=T.MUTED_TEXT,
+                                font_family_fallback=_MONO_FALLBACK,
+                                color=T.CONSOLE_TEXT if state.console else T.CONSOLE_DIM,
                             )
                         ],
                     ),

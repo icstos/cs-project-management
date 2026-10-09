@@ -2,6 +2,9 @@
 
 图表刻度与轴标签宽度的取值理由见 :func:`_bar_chart` 的注释 —— 那些是踩过坑的教训，
 改动前请先确认在深色/浅色主题下都仍然可读。
+
+版式上按"概览 → 趋势 → 明细"三层递进：先给六个指标卡，再给趋势图，最后给可排序
+的明细表，信息密度从低到高，符合"先扫一眼结论、再逐行核对"的阅读顺序。
 """
 
 from __future__ import annotations
@@ -61,7 +64,7 @@ def ReportsView(*, vm: ReportsViewModel, platform: FletPlatform) -> ft.Control:
             key="reports-body",
             expand=True,
             scroll=ft.ScrollMode.AUTO,
-            spacing=T.SPACE_MD,
+            spacing=T.SECTION_SPACING,
             controls=[
                 _toolbar(state, vm),
                 _metrics(state),
@@ -81,7 +84,7 @@ def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
 
     report = state.report
     return ft.Column(
-        spacing=T.SPACE_SM,
+        spacing=T.SPACE_MD,
         tight=True,
         controls=[
             ft.Row(
@@ -89,9 +92,11 @@ def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Container(
-                        width=220,
+                        width=240,
                         content=ft.Dropdown(
                             dense=True,
+                            filled=True,
+                            fill_color=widgets.field_fill(),
                             border=T.field_border(),
                             value=str(state.project_id) if state.project_id is not None else "all",
                             options=[
@@ -119,10 +124,9 @@ def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
                 run_spacing=T.SPACE_SM,
                 wrap=True,
                 controls=[
-                    ft.Chip(
-                        label=ft.Text(label),
+                    widgets.filter_chip(
+                        label,
                         selected=state.days == value,
-                        show_checkmark=False,
                         on_select=lambda _, target=value: vm.set_days(target),
                     )
                     for label, value in RANGES
@@ -148,8 +152,8 @@ def _metrics(state: ReportsState) -> ft.Control:
         ("活跃项目", format_count(totals.active_projects), Tone.NEUTRAL, ft.Icons.FOLDER_OUTLINED),
     )
     return ft.ResponsiveRow(
-        spacing=T.SPACE_MD,
-        run_spacing=T.SPACE_MD,
+        spacing=T.GRID_GUTTER,
+        run_spacing=T.GRID_GUTTER,
         controls=[
             widgets.metric(
                 label, value, tone=tone, icon=icon, col={"xs": 6, "sm": 4, "md": 4, "lg": 2}
@@ -164,19 +168,26 @@ def _trend_card(trend: tuple[TrendPoint, ...]) -> ft.Control:
 
     return widgets.surface(
         content=ft.Column(
-            spacing=T.SPACE_SM,
+            spacing=T.SPACE_LG,
             tight=True,
             controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True,
+                    run_spacing=T.SPACE_SM,
                     controls=[
                         ft.Row(
                             spacing=T.SPACE_SM,
                             tight=True,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Text("每日代码增减", size=13, weight=ft.FontWeight.W_600),
+                                T.text(
+                                    "每日代码增减",
+                                    level=T.TextLevel.TITLE,
+                                    size=14,
+                                    weight=ft.FontWeight.W_600,
+                                ),
                                 widgets.pill(f"最近 {len(trend)} 天", dense=True),
                             ],
                         ),
@@ -184,8 +195,8 @@ def _trend_card(trend: tuple[TrendPoint, ...]) -> ft.Control:
                             spacing=T.SPACE_LG,
                             tight=True,
                             controls=[
-                                _legend_item(T.ADDITION_COLOR, "新增行"),
-                                _legend_item(T.DELETION_COLOR, "删除行"),
+                                _legend_item(T.addition_color(), "新增行"),
+                                _legend_item(T.deletion_color(), "删除行"),
                             ],
                         ),
                     ],
@@ -202,7 +213,7 @@ def _trend_card(trend: tuple[TrendPoint, ...]) -> ft.Control:
     )
 
 
-def _legend_item(color: str, label: str) -> ft.Row:
+def _legend_item(color: ft.ColorValue, label: str) -> ft.Row:
     return ft.Row(
         spacing=T.SPACE_XS,
         tight=True,
@@ -236,7 +247,7 @@ def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
                         from_y=0,
                         to_y=point.insertions,
                         width=7,
-                        color=T.ADDITION_COLOR,
+                        color=T.addition_color(),
                         border_radius=2,
                         show_tooltip=True,
                         tooltip=(
@@ -248,7 +259,7 @@ def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
                         from_y=0,
                         to_y=-point.deletions,
                         width=7,
-                        color=T.DELETION_COLOR,
+                        color=T.deletion_color(),
                         border_radius=2,
                         show_tooltip=True,
                         tooltip=f"{point.day.strftime('%m-%d')} 删除 {point.deletions} 行",
@@ -288,9 +299,7 @@ def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
 def _table_card(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
     rows = state.rows
     if state.loading and not rows:
-        return widgets.surface(
-            height=T.CHART_HEIGHT, content=widgets.busy_block("正在汇总提交记录…")
-        )
+        return widgets.skeleton_block(rows=5, text="正在汇总提交记录…")
     if not rows:
         return widgets.surface(
             height=T.CHART_HEIGHT,
@@ -302,23 +311,45 @@ def _table_card(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
         )
 
     return widgets.surface(
-        padding=T.SPACE_SM,
-        content=ft.DataTable(
-            columns=[
-                ft.DataColumn(
-                    ft.Text(column.label),
-                    numeric=column.numeric,
-                    on_sort=lambda event: vm.sort_by(event.column_index, event.ascending),
-                )
-                for column in COLUMNS
+        padding=T.SPACE_LG,
+        content=ft.Column(
+            spacing=T.SPACE_SM,
+            tight=True,
+            controls=[
+                ft.Row(
+                    spacing=T.SPACE_SM,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        T.text(
+                            "提交明细",
+                            level=T.TextLevel.TITLE,
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                        ),
+                        widgets.pill(f"{len(rows)} 条", dense=True),
+                        ft.Container(expand=True),
+                        widgets.muted("点击表头可排序", size=11),
+                    ],
+                ),
+                ft.DataTable(
+                    columns=[
+                        ft.DataColumn(
+                            ft.Text(column.label, font_family=T.FONT_FAMILY),
+                            numeric=column.numeric,
+                            on_sort=lambda event: vm.sort_by(event.column_index, event.ascending),
+                        )
+                        for column in COLUMNS
+                    ],
+                    rows=[_table_row(row) for row in rows],
+                    sort_column_index=state.sort_index,
+                    sort_ascending=state.sort_ascending,
+                    border=ft.Border.all(0, ft.Colors.TRANSPARENT),
+                    border_radius=T.RADIUS_MD,
+                    column_spacing=20,
+                    heading_row_height=44,
+                    data_row_max_height=48,
+                ),
             ],
-            rows=[_table_row(row) for row in rows],
-            sort_column_index=state.sort_index,
-            sort_ascending=state.sort_ascending,
-            border=ft.Border.all(0, ft.Colors.TRANSPARENT),
-            border_radius=T.RADIUS_MD,
-            column_spacing=20,
-            data_row_max_height=44,
         ),
     )
 
@@ -328,7 +359,13 @@ def _table_row(row: CommitRow) -> ft.DataRow:
     return ft.DataRow(
         cells=[
             ft.DataCell(
-                ft.Text(row.project_name, size=12, weight=ft.FontWeight.W_500, max_lines=1)
+                ft.Text(
+                    row.project_name,
+                    size=12,
+                    weight=ft.FontWeight.W_500,
+                    max_lines=1,
+                    font_family=T.FONT_FAMILY,
+                )
             ),
             ft.DataCell(
                 ft.Container(
@@ -339,6 +376,7 @@ def _table_row(row: CommitRow) -> ft.DataRow:
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                         tooltip=commit.message,
+                        font_family=T.FONT_FAMILY,
                     ),
                 )
             ),
@@ -348,25 +386,30 @@ def _table_row(row: CommitRow) -> ft.DataRow:
                     format_datetime(commit.committed_at),
                     size=12,
                     tooltip=f"提交 {commit.short_hash}",
+                    font_family=T.FONT_FAMILY,
                 )
             ),
             ft.DataCell(
-                ft.Text(
+                T.text(
                     f"+{format_count(commit.insertions)}",
+                    level=T.TextLevel.LABEL,
                     size=12,
-                    color=T.ADDITION_COLOR,
+                    color=T.addition_color(),
                     weight=ft.FontWeight.W_600,
                 )
             ),
             ft.DataCell(
-                ft.Text(
+                T.text(
                     f"-{format_count(commit.deletions)}",
+                    level=T.TextLevel.LABEL,
                     size=12,
-                    color=T.DELETION_COLOR,
+                    color=T.deletion_color(),
                     weight=ft.FontWeight.W_600,
                 )
             ),
-            ft.DataCell(ft.Text(format_count(commit.files_changed), size=12)),
+            ft.DataCell(
+                ft.Text(format_count(commit.files_changed), size=12, font_family=T.FONT_FAMILY)
+            ),
         ]
     )
 

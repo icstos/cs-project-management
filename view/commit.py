@@ -2,6 +2,10 @@
 
 每次切换项目都会让视图模型重新探测一次工作区，因此在按下提交之前，
 界面上显示的待提交清单就是**即将提交**的内容。
+
+视觉上这一页是"两栏工作台"：左侧是窄的选择栏（只用一层卡片包住，降低噪音），
+右侧从上到下依次是仓库状态、上一次结果、待提交清单与提交区，视线自上而下
+正好对应真实的操作顺序。
 """
 
 from __future__ import annotations
@@ -65,7 +69,7 @@ def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ft.Control:
         ),
         body=ft.Row(
             expand=True,
-            spacing=T.SPACE_MD,
+            spacing=T.SPACE_LG,
             vertical_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
                 ft.Container(width=_PANE_WIDTH, content=_project_pane(state, vm, page)),
@@ -75,28 +79,32 @@ def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ft.Control:
     )
 
 
-# --------------------------------------------------------------------------- 构件
+# --------------------------------------------------------------------------- 左栏
 def _project_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
     return widgets.surface(
         expand=True,
-        padding=T.SPACE_SM,
+        padding=T.SPACE_MD,
         content=ft.Column(
             expand=True,
-            spacing=T.SPACE_XS,
+            spacing=T.SPACE_SM,
             controls=[
-                ft.Container(
-                    padding=ft.Padding.only(left=T.SPACE_SM, top=T.SPACE_XS, bottom=T.SPACE_XS),
-                    content=ft.Row(
-                        controls=[
-                            ft.Text("选择项目", size=13, weight=ft.FontWeight.W_600),
-                            ft.Container(expand=True),
-                            widgets.pill(str(len(state.projects)), dense=True),
-                        ]
-                    ),
+                ft.Row(
+                    spacing=T.SPACE_SM,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        T.text(
+                            "选择项目",
+                            level=T.TextLevel.LABEL,
+                            weight=ft.FontWeight.W_600,
+                            color=T.MUTED_TEXT,
+                        ),
+                        ft.Container(expand=True),
+                        widgets.pill(str(len(state.projects)), dense=True),
+                    ],
                 ),
                 ft.ListView(
                     expand=True,
-                    spacing=T.SPACE_XXS,
+                    spacing=T.SPACE_XS,
                     controls=[
                         _project_tile(
                             project, active=project.id == state.selected_id, vm=vm, page=page
@@ -112,14 +120,19 @@ def _project_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.
 def _project_tile(
     project: Project, *, active: bool, vm: CommitViewModel, page: ft.Page
 ) -> ft.Container:
-    tone = T.tone_style(Tone.PRIMARY)
+    """项目条目：选中态用主色浅底 + 左侧指示条，未选中悬停时浮出一层薄底。"""
     return ft.Container(
         key=f"commit-project-{project.id}",
         on_click=lambda _: page.run_task(vm.choose, project),
         border_radius=T.RADIUS_MD,
         padding=ft.Padding.symmetric(horizontal=T.SPACE_MD, vertical=T.SPACE_SM),
-        bgcolor=tone.container if active else ft.Colors.TRANSPARENT,
-        border=ft.Border.all(1, tone.accent if active else ft.Colors.TRANSPARENT),
+        bgcolor=ft.Colors.PRIMARY_CONTAINER if active else ft.Colors.TRANSPARENT,
+        border=ft.Border.only(
+            left=ft.BorderSide(3, ft.Colors.PRIMARY if active else ft.Colors.TRANSPARENT)
+        ),
+        ink=True,
+        ink_color=ft.Colors.with_opacity(0.06, ft.Colors.PRIMARY),
+        animate=T.animate(duration=T.DURATION_FAST),
         content=ft.Column(
             spacing=T.SPACE_XXS,
             tight=True,
@@ -128,10 +141,11 @@ def _project_tile(
                     spacing=T.SPACE_SM,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Text(
+                        T.text(
                             project.name,
-                            size=13,
+                            level=T.TextLevel.BODY,
                             weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_500,
+                            color=ft.Colors.ON_PRIMARY_CONTAINER if active else None,
                             expand=True,
                             max_lines=1,
                             overflow=ft.TextOverflow.ELLIPSIS,
@@ -147,12 +161,17 @@ def _project_tile(
                         ),
                     ],
                 ),
-                widgets.muted(project.branch or "—", size=11),
+                T.text(
+                    project.branch or "—",
+                    level=T.TextLevel.CAPTION,
+                    color=ft.Colors.ON_PRIMARY_CONTAINER if active else T.MUTED_TEXT,
+                ),
             ],
         ),
     )
 
 
+# --------------------------------------------------------------------------- 右栏
 def _commit_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
     selected = state.selected
     if selected is None:
@@ -168,7 +187,7 @@ def _commit_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.C
     changes = state.changes
     return ft.Column(
         expand=True,
-        spacing=T.SPACE_MD,
+        spacing=T.SPACE_LG,
         controls=[
             _repo_panel(state, selected),
             *([_notice_row(state)] if state.result else []),
@@ -176,13 +195,18 @@ def _commit_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.C
                 expand=True,
                 content=ft.Column(
                     expand=True,
-                    spacing=T.SPACE_SM,
+                    spacing=T.SPACE_MD,
                     controls=[
                         ft.Row(
                             spacing=T.SPACE_SM,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Text("待提交变更", size=13, weight=ft.FontWeight.W_600),
+                                T.text(
+                                    "待提交变更",
+                                    level=T.TextLevel.TITLE,
+                                    size=14,
+                                    weight=ft.FontWeight.W_600,
+                                ),
                                 widgets.pill(f"{len(changes)} 个文件", dense=True),
                                 ft.Container(expand=True),
                                 widgets.muted(
@@ -237,8 +261,24 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
                     spacing=T.SPACE_SM,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Icon(ft.Icons.FOLDER, size=17, color=ft.Colors.PRIMARY),
-                        ft.Text(project.name, size=14, weight=ft.FontWeight.W_600),
+                        ft.Container(
+                            width=30,
+                            height=30,
+                            border_radius=T.RADIUS_SM,
+                            bgcolor=T.tone_style(Tone.PRIMARY).container,
+                            alignment=ft.Alignment.CENTER,
+                            content=ft.Icon(
+                                ft.Icons.FOLDER,
+                                size=16,
+                                color=T.tone_style(Tone.PRIMARY).accent,
+                            ),
+                        ),
+                        T.text(
+                            project.name,
+                            level=T.TextLevel.TITLE,
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                        ),
                         widgets.permission_pill(project.permission),
                         ft.Container(expand=True),
                         ft.ProgressRing(width=16, height=16, stroke_width=2)
@@ -296,9 +336,10 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
 
 
 def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
+    """提交区：输入说明 + 推送开关 + 提交按钮，永远贴在页面底部。"""
     return widgets.surface(
         content=ft.Column(
-            spacing=T.SPACE_SM,
+            spacing=T.SPACE_MD,
             tight=True,
             controls=[
                 # 受控输入：文案的唯一来源是 message 状态，
@@ -309,9 +350,11 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
                     hint_text="例如：修复登录跳转异常",
                     value=state.message,
                     multiline=True,
-                    min_lines=4,
+                    min_lines=3,
                     max_lines=8,
                     border=T.field_border(),
+                    fill_color=widgets.field_fill(),
+                    filled=True,
                     shift_enter=True,
                     on_change=lambda e: vm.set_message(widgets.event_value(e) or ""),
                     on_submit=lambda _: page.run_task(vm.submit),
@@ -319,6 +362,8 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True,
+                    run_spacing=T.SPACE_SM,
                     controls=[
                         ft.Row(
                             spacing=T.SPACE_SM,
@@ -388,24 +433,26 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
 
 
 def _change_row(change: Change) -> ft.Control:
+    """一条变更：类型角标 + 路径 + 类型文字，悬停时淡淡的底色提示可读区域。"""
     style = T.tone_style(_CHANGE_TONES.get(change.kind, Tone.NEUTRAL))
     return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=T.SPACE_SM, vertical=T.SPACE_XXS),
+        padding=ft.Padding.symmetric(horizontal=T.SPACE_SM, vertical=T.SPACE_XS),
         border_radius=T.RADIUS_SM,
         content=ft.Row(
-            spacing=T.SPACE_SM,
+            spacing=T.SPACE_MD,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
                 ft.Container(
-                    width=20,
-                    height=20,
-                    border_radius=T.RADIUS_SM,
+                    width=22,
+                    height=22,
+                    border_radius=T.RADIUS_XS,
                     bgcolor=style.container,
                     alignment=ft.Alignment.CENTER,
-                    content=ft.Text(
+                    content=T.text(
                         change.kind.badge,
+                        level=T.TextLevel.CAPTION,
                         size=11,
-                        weight=ft.FontWeight.BOLD,
+                        weight=ft.FontWeight.W_700,
                         color=style.on_container,
                     ),
                 ),
@@ -416,6 +463,7 @@ def _change_row(change: Change) -> ft.Control:
                     max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS,
                     tooltip=change.path,
+                    font_family=T.FONT_FAMILY,
                 ),
                 widgets.muted(change.kind.label, size=11),
             ],
