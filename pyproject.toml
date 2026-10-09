@@ -7,7 +7,7 @@ name = "cs-project-management"
 version = "1.0.0"
 description = "CS 项目管理桌面应用：本地 Git 项目的台账、提交与统计"
 requires-python = ">=3.12"
-dependencies = ["flet==1.0.3", "flet-charts==1.0.3", "sqlmodel>=0.0.39"]
+dependencies = ["flet==1.0.4", "flet-charts==1.0.4", "sqlmodel>=0.0.39"]
 
 [project.optional-dependencies]
 dev = ["ruff>=0.6"]
