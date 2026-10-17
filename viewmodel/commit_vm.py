@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from models.dtos import Change, ChangeKind, GitStatus, Project
@@ -102,13 +103,32 @@ class CommitState:
             return self.preview.change_count
         return self.selected.changed_files if self.selected else 0
 
+    def changed_files_of(self, project: Project) -> int:
+        """左栏某个项目当前该显示的待提交文件数。
+
+        ``Project.changed_files`` 是**台账缓存值**，只在「刷新 / 提交」时落库，
+        所以探测完工作区之后它必然是旧的。选中项目的探测结果是眼下唯一可信的读数，
+        数字要跟着它走；其余项目还没探测过，只能先显示缓存值。
+        """
+        if self.preview is not None and project.id == self.selected_id:
+            return self.preview.change_count
+        return project.changed_files
+
 
 class CommitViewModel(ViewModel[CommitState]):
     """提交页的状态与命令。"""
 
-    def __init__(self, service: CommitService) -> None:
+    def __init__(
+        self,
+        service: CommitService,
+        *,
+        on_changed: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         super().__init__(CommitState())
         self._service = service
+        # 提交会改写台账里缓存的变更数，全局项目列表据此重新读取一次，
+        # 否则「项目」页与侧栏统计会一直停在提交前的数字上。
+        self._on_changed = on_changed
 
     # ------------------------------------------------------------------ 同步
     def sync(self, *, projects: tuple[Project, ...]) -> None:
@@ -202,3 +222,5 @@ class CommitViewModel(ViewModel[CommitState]):
         self.update(committing=False, message="", result=CommitResult(outcome.detail, tone))
         self.notify(outcome.detail, tone)
         await self.load_preview()
+        if self._on_changed is not None:
+            await self._on_changed()

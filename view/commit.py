@@ -107,7 +107,11 @@ def _project_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.
                     spacing=T.SPACE_XS,
                     controls=[
                         _project_tile(
-                            project, active=project.id == state.selected_id, vm=vm, page=page
+                            project,
+                            active=project.id == state.selected_id,
+                            changed_files=state.changed_files_of(project),
+                            vm=vm,
+                            page=page,
                         )
                         for project in state.projects
                     ],
@@ -118,9 +122,18 @@ def _project_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.
 
 
 def _project_tile(
-    project: Project, *, active: bool, vm: CommitViewModel, page: ft.Page
+    project: Project,
+    *,
+    active: bool,
+    changed_files: int,
+    vm: CommitViewModel,
+    page: ft.Page,
 ) -> ft.Container:
-    """项目条目：选中态用主色浅底 + 左侧指示条，未选中悬停时浮出一层薄底。"""
+    """项目条目：选中态用主色浅底 + 左侧指示条，未选中悬停时浮出一层薄底。
+
+    ``changed_files`` 由视图模型给出（选中项目取实时探测结果），
+    不要退回 ``project.changed_files`` —— 那是台账缓存值，探测后不会变。
+    """
     return ft.Container(
         key=f"commit-project-{project.id}",
         on_click=lambda _: page.run_task(vm.choose, project),
@@ -151,12 +164,8 @@ def _project_tile(
                             overflow=ft.TextOverflow.ELLIPSIS,
                         ),
                         *(
-                            [
-                                widgets.pill(
-                                    f"{project.changed_files}", tone=Tone.WARNING, dense=True
-                                )
-                            ]
-                            if project.changed_files
+                            [widgets.pill(f"{changed_files}", tone=Tone.WARNING, dense=True)]
+                            if changed_files
                             else []
                         ),
                     ],

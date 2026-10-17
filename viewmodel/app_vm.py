@@ -86,7 +86,7 @@ class AppViewModel(ViewModel[AppState]):
         super().__init__(AppState())
         self._service = projects
         self.projects_vm = ProjectsViewModel(projects, on_changed=self.refresh)
-        self.commit_vm = CommitViewModel(commits)
+        self.commit_vm = CommitViewModel(commits, on_changed=self.refresh)
         self.reports_vm = ReportsViewModel(reports)
         self.build_vm = BuildViewModel(build)
         self._refresh_task: asyncio.Task[None] | None = None
