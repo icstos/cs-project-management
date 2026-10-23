@@ -173,6 +173,10 @@ class SystemShellPort(Protocol):
 
     def reveal(self, path: str) -> tuple[bool, str]: ...
 
+    def notify_changed(self, path: str) -> None:
+        """告诉外壳「这个目录的状态变了」，让资源管理器与 Git 客户端的角标重新读取。"""
+        ...
+
 
 @runtime_checkable
 class PathPort(Protocol):

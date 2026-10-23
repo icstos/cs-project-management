@@ -105,7 +105,7 @@ def build_application() -> Application:
             shell=shell,
             concurrency=git_settings.concurrency,
         ),
-        commits=CommitService(projects=project_store, git=git),
+        commits=CommitService(projects=project_store, git=git, shell=shell),
         reports=ReportService(
             projects=project_store,
             commits=commit_store,
