@@ -1,9 +1,9 @@
-"""视图层的平台适配：把 flet 提供的系统能力接到视图模型的请求上。
+"""视图层的平台适配：把 cs-ui / Flet 提供的系统能力接到视图模型的请求上。
 
 视图模型只发出 :class:`~viewmodel.base.PlatformRequest`，具体怎么读剪贴板、
 怎么弹系统对话框由这里决定。反向也成立：键盘事件在这里被归一化成
 :class:`~viewmodel.base.Shortcut` 再交给视图模型，视图模型因此完全不认识
-flet 控件类型。
+任何控件类型。
 
 本模块还提供两个小工具钩子，让每个页面用两行代码接好这套通道。
 """
@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import logging
 
-import flet as ft
+import ui
+from ui import FilePicker, FilePickerFileType, Page
 
 from models.enums import Tone
 from view import widgets
@@ -27,7 +28,7 @@ __all__ = ["FletPlatform", "use_notices", "use_platform_requests", "use_shortcut
 class FletPlatform:
     """一次会话一份：剪贴板与文件选择器都是页面级服务，不能重复注册。"""
 
-    def __init__(self, page: ft.Page, clipboard: ft.Clipboard, picker: ft.FilePicker) -> None:
+    def __init__(self, page: Page, clipboard: ui.Clipboard, picker: FilePicker) -> None:
         self.page = page
         self._clipboard = clipboard
         self._picker = picker
@@ -89,7 +90,7 @@ class FletPlatform:
             saved = await self._picker.save_file(
                 dialog_title="导出提交明细",
                 file_name=request.text,
-                file_type=ft.FilePickerFileType.CUSTOM,
+                file_type=FilePickerFileType.CUSTOM,
                 allowed_extensions=["csv"],
                 src_bytes=request.data,
             )
@@ -113,26 +114,26 @@ def use_platform_requests(platform: FletPlatform, vm: ViewModel) -> None:
         if request is not None:
             platform.page.run_task(platform.perform, request, vm)
 
-    ft.use_effect(setup, [request])
+    ui.use_effect(setup, [request])
 
 
-def use_notices(page: ft.Page, vm: ViewModel) -> None:
+def use_notices(page: Page, vm: ViewModel) -> None:
     """播报视图模型的一次性提示。
 
     ``notice`` 自带单调序号，视图记住最近播报过的那条，因此重渲染不会重复弹窗。
     """
     notice = vm.notice
-    announced = ft.use_ref(0)
+    announced = ui.use_ref(0)
 
     def setup() -> None:
         if notice is not None and notice.seq != announced.current:
             announced.current = notice.seq
             widgets.toast(page, notice.message, tone=notice.tone)
 
-    ft.use_effect(setup, [notice])
+    ui.use_effect(setup, [notice])
 
 
-def use_shortcuts(page: ft.Page, vm: AppViewModel) -> None:
+def use_shortcuts(page: Page, vm: AppViewModel) -> None:
     """把键盘事件归一化后交给视图模型，卸载时解除绑定。"""
 
     def setup():
@@ -141,4 +142,4 @@ def use_shortcuts(page: ft.Page, vm: AppViewModel) -> None:
         )
         return lambda: setattr(page, "on_keyboard_event", None)
 
-    ft.use_effect(setup, [])
+    ui.use_effect(setup, [])

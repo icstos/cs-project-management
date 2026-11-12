@@ -3,14 +3,37 @@
 每次切换项目都会让视图模型重新探测一次工作区，因此在按下提交之前，
 界面上显示的待提交清单就是**即将提交**的内容。
 
-视觉上这一页是"两栏工作台"：左侧是窄的选择栏（只用一层卡片包住，降低噪音），
+视觉上是"两栏工作台"：左侧是窄的选择栏（只用一层卡片包住，降低噪音），
 右侧从上到下依次是仓库状态、上一次结果、待提交清单与提交区，视线自上而下
 正好对应真实的操作顺序。
 """
 
 from __future__ import annotations
 
-import flet as ft
+import ui
+from ui import (
+    SPACE,
+    Alignment,
+    Border,
+    BorderSide,
+    Colors,
+    Column,
+    Container,
+    CrossAxisAlignment,
+    FontWeight,
+    FormRow,
+    Icon,
+    Icons,
+    ListView,
+    MainAxisAlignment,
+    Padding,
+    Row,
+    Switch,
+    Tag,
+    Text,
+    TextField,
+    TextOverflow,
+)
 
 from models.dtos import Change, Project
 from models.enums import ChangeKind, Tone
@@ -20,7 +43,7 @@ from view.guard import guarded
 from view.view_platform import FletPlatform, use_notices, use_platform_requests
 from viewmodel.commit_vm import CommitState, CommitViewModel
 
-_PANE_WIDTH = 320
+_PANE_WIDTH = 300
 _CHANGE_TONES: dict[ChangeKind, Tone] = {
     ChangeKind.ADDED: Tone.SUCCESS,
     ChangeKind.UNTRACKED: Tone.SUCCESS,
@@ -33,14 +56,14 @@ _CHANGE_TONES: dict[ChangeKind, Tone] = {
 
 
 @guarded
-def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ft.Control:
-    page = ft.context.page
+def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ui.Control:
+    page = ui.context.page
     state = vm.state
     use_notices(page, vm)
     use_platform_requests(platform, vm)
 
     # 换项目就重新探测：这是"提交前能看到真实待提交内容"的关键
-    ft.use_effect(lambda: page.run_task(vm.load_preview), [state.selected_id])
+    ui.use_effect(lambda: page.run_task(vm.load_preview), [state.selected_id])
 
     if not state.projects:
         return widgets.page_shell(
@@ -48,7 +71,7 @@ def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ft.Control:
                 "提交与推送", "暂存全部变更、生成提交，并按需推送到远程仓库"
             ),
             body=widgets.empty_state(
-                ft.Icons.INVENTORY_2_OUTLINED,
+                Icons.INVENTORY_2_OUTLINED,
                 "还没有可提交的项目",
                 "请先在「项目」中添加本地 Git 仓库",
             ),
@@ -61,50 +84,50 @@ def CommitView(*, vm: CommitViewModel, platform: FletPlatform) -> ft.Control:
             actions=[
                 widgets.outlined(
                     "重新探测",
-                    icon=ft.Icons.REFRESH,
+                    icon=Icons.REFRESH,
                     disabled=state.loading_preview or state.selected is None,
                     on_click=lambda _: page.run_task(vm.load_preview),
                 ),
             ],
         ),
-        body=ft.Row(
+        body=Row(
             expand=True,
-            spacing=T.SPACE_LG,
-            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            spacing=T.GRID_GUTTER,
+            vertical_alignment=CrossAxisAlignment.STRETCH,
             controls=[
-                ft.Container(width=_PANE_WIDTH, content=_project_pane(state, vm, page)),
-                ft.Container(expand=True, content=_commit_pane(state, vm, page)),
+                Container(width=_PANE_WIDTH, content=_project_pane(state, vm, page)),
+                Container(expand=True, content=_commit_pane(state, vm, page)),
             ],
         ),
     )
 
 
 # --------------------------------------------------------------------------- 左栏
-def _project_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
+def _project_pane(state: CommitState, vm: CommitViewModel, page: ui.Page) -> ui.Control:
     return widgets.surface(
         expand=True,
-        padding=T.SPACE_MD,
-        content=ft.Column(
+        padding=SPACE["3"],
+        content=Column(
             expand=True,
-            spacing=T.SPACE_SM,
+            spacing=SPACE["2"],
             controls=[
-                ft.Row(
-                    spacing=T.SPACE_SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    spacing=SPACE["2"],
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     controls=[
                         T.text(
                             "选择项目",
                             level=T.TextLevel.LABEL,
-                            weight=ft.FontWeight.W_600,
+                            weight=FontWeight.W_600,
                             color=T.MUTED_TEXT,
                         ),
-                        ft.Container(expand=True),
+                        Container(expand=True),
                         widgets.pill(str(len(state.projects)), dense=True),
                     ],
                 ),
-                ft.ListView(
+                ListView(
                     expand=True,
-                    spacing=T.SPACE_XS,
+                    spacing=SPACE["1"],
                     controls=[
                         _project_tile(
                             project,
@@ -127,41 +150,39 @@ def _project_tile(
     active: bool,
     changed_files: int,
     vm: CommitViewModel,
-    page: ft.Page,
-) -> ft.Container:
+    page: ui.Page,
+) -> Container:
     """项目条目：选中态用主色浅底 + 左侧指示条，未选中悬停时浮出一层薄底。
 
     ``changed_files`` 由视图模型给出（选中项目取实时探测结果），
     不要退回 ``project.changed_files`` —— 那是台账缓存值，探测后不会变。
     """
-    return ft.Container(
+    return Container(
         key=f"commit-project-{project.id}",
         on_click=lambda _: page.run_task(vm.choose, project),
         border_radius=T.RADIUS_MD,
-        padding=ft.Padding.symmetric(horizontal=T.SPACE_MD, vertical=T.SPACE_SM),
-        bgcolor=ft.Colors.PRIMARY_CONTAINER if active else ft.Colors.TRANSPARENT,
-        border=ft.Border.only(
-            left=ft.BorderSide(3, ft.Colors.PRIMARY if active else ft.Colors.TRANSPARENT)
-        ),
+        padding=Padding.symmetric(horizontal=SPACE["2"], vertical=SPACE["2"]),
+        bgcolor=Colors.PRIMARY_CONTAINER if active else Colors.TRANSPARENT,
+        border=Border.only(left=BorderSide(3, Colors.PRIMARY if active else Colors.TRANSPARENT)),
         ink=True,
-        ink_color=ft.Colors.with_opacity(0.06, ft.Colors.PRIMARY),
+        ink_color=ui.overlay(0.06, role=Colors.PRIMARY),
         animate=T.animate(duration=T.DURATION_FAST),
-        content=ft.Column(
-            spacing=T.SPACE_XXS,
+        content=Column(
+            spacing=SPACE["1"],
             tight=True,
             controls=[
-                ft.Row(
-                    spacing=T.SPACE_SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    spacing=SPACE["2"],
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     controls=[
                         T.text(
                             project.name,
                             level=T.TextLevel.BODY,
-                            weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_500,
-                            color=ft.Colors.ON_PRIMARY_CONTAINER if active else None,
+                            weight=FontWeight.W_600 if active else FontWeight.W_500,
+                            color=Colors.ON_PRIMARY_CONTAINER if active else None,
                             expand=True,
                             max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
+                            overflow=TextOverflow.ELLIPSIS,
                         ),
                         *(
                             [widgets.pill(f"{changed_files}", tone=Tone.WARNING, dense=True)]
@@ -173,7 +194,7 @@ def _project_tile(
                 T.text(
                     project.branch or "—",
                     level=T.TextLevel.CAPTION,
-                    color=ft.Colors.ON_PRIMARY_CONTAINER if active else T.MUTED_TEXT,
+                    color=Colors.ON_PRIMARY_CONTAINER if active else T.MUTED_TEXT,
                 ),
             ],
         ),
@@ -181,57 +202,56 @@ def _project_tile(
 
 
 # --------------------------------------------------------------------------- 右栏
-def _commit_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
+def _commit_pane(state: CommitState, vm: CommitViewModel, page: ui.Page) -> ui.Control:
     selected = state.selected
     if selected is None:
         return widgets.surface(
             expand=True,
             content=widgets.empty_state(
-                ft.Icons.TOUCH_APP,
+                Icons.TOUCH_APP,
                 "请选择左侧的项目",
                 "选中后可查看待提交文件并填写提交说明",
             ),
         )
 
     changes = state.changes
-    return ft.Column(
+    return Column(
         expand=True,
-        spacing=T.SPACE_LG,
+        spacing=T.GRID_GUTTER,
         controls=[
             _repo_panel(state, selected),
             *([_notice_row(state)] if state.result else []),
             widgets.surface(
                 expand=True,
-                content=ft.Column(
+                content=Column(
                     expand=True,
-                    spacing=T.SPACE_MD,
+                    spacing=T.FIELD_GAP,
                     controls=[
-                        ft.Row(
-                            spacing=T.SPACE_SM,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        Row(
+                            spacing=SPACE["2"],
+                            vertical_alignment=CrossAxisAlignment.CENTER,
                             controls=[
                                 T.text(
                                     "待提交变更",
                                     level=T.TextLevel.TITLE,
-                                    size=14,
-                                    weight=ft.FontWeight.W_600,
+                                    weight=FontWeight.W_600,
                                 ),
                                 widgets.pill(f"{len(changes)} 个文件", dense=True),
-                                ft.Container(expand=True),
+                                Container(expand=True),
                                 widgets.muted(
                                     " · ".join(item.label for item in state.summaries), size=11
                                 ),
                             ],
                         ),
-                        ft.Container(
+                        Container(
                             expand=True,
-                            content=ft.ListView(
-                                spacing=T.SPACE_XXS,
-                                padding=ft.Padding.symmetric(vertical=T.SPACE_XXS),
+                            content=ListView(
+                                spacing=SPACE["1"],
+                                padding=Padding.symmetric(vertical=SPACE["1"]),
                                 controls=[_change_row(change) for change in changes]
                                 or [
                                     widgets.hint_row(
-                                        ft.Icons.CHECK_CIRCLE_OUTLINE,
+                                        Icons.CHECK_CIRCLE_OUTLINE,
                                         "工作区干净，没有需要提交的变更",
                                         tone=Tone.SUCCESS,
                                     )
@@ -246,38 +266,38 @@ def _commit_pane(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.C
     )
 
 
-def _notice_row(state: CommitState) -> ft.Control:
+def _notice_row(state: CommitState) -> ui.Control:
     """最近一次提交 / 推送的结果。浮层只活 3 秒，失败原因得在界面上留一份。"""
     result = state.result
     assert result is not None  # 由调用方保证
-    icon = ft.Icons.CHECK_CIRCLE_OUTLINE if result.tone is Tone.SUCCESS else ft.Icons.ERROR_OUTLINE
+    icon = Icons.CHECK_CIRCLE_OUTLINE if result.tone is Tone.SUCCESS else Icons.ERROR_OUTLINE
     return widgets.surface(
-        padding=T.SPACE_MD,
+        padding=SPACE["3"],
         content=widgets.hint_row(icon, result.detail, tone=result.tone),
     )
 
 
-def _repo_panel(state: CommitState, project: Project) -> ft.Control:
+def _repo_panel(state: CommitState, project: Project) -> ui.Control:
     status = state.preview
     branch = (status.branch if status else project.branch) or "—"
 
     return widgets.surface(
-        content=ft.Column(
-            spacing=T.SPACE_SM,
+        content=Column(
+            spacing=SPACE["2"],
             tight=True,
             controls=[
-                ft.Row(
-                    spacing=T.SPACE_SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    spacing=SPACE["2"],
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Container(
-                            width=30,
-                            height=30,
+                        Container(
+                            width=28,
+                            height=28,
                             border_radius=T.RADIUS_SM,
                             bgcolor=T.tone_style(Tone.PRIMARY).container,
-                            alignment=ft.Alignment.CENTER,
-                            content=ft.Icon(
-                                ft.Icons.FOLDER,
+                            alignment=Alignment.CENTER,
+                            content=Icon(
+                                Icons.FOLDER,
                                 size=16,
                                 color=T.tone_style(Tone.PRIMARY).accent,
                             ),
@@ -285,12 +305,11 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
                         T.text(
                             project.name,
                             level=T.TextLevel.TITLE,
-                            size=14,
-                            weight=ft.FontWeight.W_600,
+                            weight=FontWeight.W_600,
                         ),
                         widgets.permission_pill(project.permission),
-                        ft.Container(expand=True),
-                        ft.ProgressRing(width=16, height=16, stroke_width=2)
+                        Container(expand=True),
+                        ui.Loading(size_name="small")
                         if state.loading_preview
                         else widgets.pill(
                             f"{state.change_count} 个变更",
@@ -299,15 +318,22 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
                         ),
                     ],
                 ),
-                widgets.muted(project.local_path, size=11, max_lines=1),
-                ft.Row(
-                    spacing=T.SPACE_SM,
+                widgets.muted(project.local_path, size=11),
+                Row(
+                    spacing=SPACE["2"],
                     wrap=True,
-                    run_spacing=T.SPACE_SM,
+                    run_spacing=SPACE["2"],
                     controls=[
-                        widgets.pill(branch, icon=ft.Icons.ALT_ROUTE, dense=True),
+                        Tag(branch, role="primary", icon=Icons.ALT_ROUTE, dense=True),
                         *(
-                            [widgets.pill(status.upstream, icon=ft.Icons.CLOUD_DONE, dense=True)]
+                            [
+                                Tag(
+                                    status.upstream,
+                                    role="neutral",
+                                    icon=Icons.CLOUD_DONE,
+                                    dense=True,
+                                )
+                            ]
                             if status and status.upstream
                             else []
                         ),
@@ -316,7 +342,7 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
                                 widgets.pill(
                                     f"领先 {status.ahead}",
                                     tone=Tone.INFO,
-                                    icon=ft.Icons.UPLOAD,
+                                    icon=Icons.UPLOAD,
                                     dense=True,
                                 )
                             ]
@@ -328,7 +354,7 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
                                 widgets.pill(
                                     f"落后 {status.behind}",
                                     tone=Tone.WARNING,
-                                    icon=ft.Icons.DOWNLOAD,
+                                    icon=Icons.DOWNLOAD,
                                     dense=True,
                                 )
                             ]
@@ -344,55 +370,56 @@ def _repo_panel(state: CommitState, project: Project) -> ft.Control:
     )
 
 
-def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Control:
+def _composer(state: CommitState, vm: CommitViewModel, page: ui.Page) -> ui.Control:
     """提交区：输入说明 + 推送开关 + 提交按钮，永远贴在页面底部。"""
     return widgets.surface(
-        content=ft.Column(
-            spacing=T.SPACE_MD,
+        content=Column(
+            spacing=T.FIELD_GAP,
             tight=True,
+            horizontal_alignment=CrossAxisAlignment.STRETCH,
             controls=[
-                # 受控输入：文案的唯一来源是 message 状态，
-                # 因此控件每次渲染重建、不在渲染后回写属性。
-                ft.TextField(
-                    key="commit-message",
+                # 标签放到上方（vertical）：多行输入左边再切一列标签，
+                # 会白白窄掉 100px，而这行字本身就该占满整行。
+                FormRow(
                     label="提交说明",
-                    hint_text="例如：修复登录跳转异常",
-                    value=state.message,
-                    multiline=True,
-                    min_lines=3,
-                    max_lines=8,
-                    border=T.field_border(),
-                    fill_color=widgets.field_fill(),
-                    filled=True,
-                    shift_enter=True,
-                    on_change=lambda e: vm.set_message(widgets.event_value(e) or ""),
-                    on_submit=lambda _: page.run_task(vm.submit),
+                    vertical=True,
+                    # 受控输入：文案的唯一来源是 message 状态，
+                    # 因此控件每次渲染重建、不在渲染后回写属性。
+                    control=TextField(
+                        key="commit-message",
+                        hint_text="例如：修复登录跳转异常",
+                        value=state.message,
+                        multiline=True,
+                        min_lines=3,
+                        max_lines=8,
+                        shift_enter=True,
+                        on_change=lambda e: vm.set_message(widgets.event_value(e) or ""),
+                        on_submit=lambda _: page.run_task(vm.submit),
+                    ),
                 ),
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    alignment=MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     wrap=True,
-                    run_spacing=T.SPACE_SM,
+                    run_spacing=SPACE["2"],
                     controls=[
-                        ft.Row(
-                            spacing=T.SPACE_SM,
+                        Row(
+                            spacing=SPACE["2"],
                             tight=True,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Switch(
+                                Switch(
                                     label="推送到所有远程",
                                     value=state.will_push,
-                                    on_change=lambda e: vm.toggle_push(
-                                        bool(widgets.event_value(e))
-                                    ),
+                                    on_toggle=vm.toggle_push,
                                     disabled=state.committing or not state.has_remote,
-                                ),
+                                ).ui(),
                                 *(
                                     [
                                         widgets.pill(
                                             "该仓库未配置远程",
                                             tone=Tone.WARNING,
-                                            icon=ft.Icons.CLOUD_OFF,
+                                            icon=Icons.CLOUD_OFF,
                                             dense=True,
                                         )
                                     ]
@@ -401,10 +428,10 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
                                 ),
                             ],
                         ),
-                        ft.Row(
-                            spacing=T.SPACE_SM,
+                        Row(
+                            spacing=SPACE["2"],
                             tight=True,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=CrossAxisAlignment.CENTER,
                             controls=[
                                 # shift_enter=True：Enter 提交、Shift+Enter 换行。
                                 # 多行输入框不会触发 on_submit，必须靠它。
@@ -415,7 +442,7 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
                                     else "提交并推送"
                                     if state.will_push
                                     else "仅提交",
-                                    icon=ft.Icons.UPLOAD,
+                                    icon=Icons.UPLOAD,
                                     disabled=not state.can_submit,
                                     on_click=lambda _: page.run_task(vm.submit),
                                 ),
@@ -426,7 +453,7 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
                 *(
                     [
                         widgets.hint_row(
-                            ft.Icons.CLOUD_OFF,
+                            Icons.CLOUD_OFF,
                             "该仓库没有配置任何远程仓库，提交后无处可推。"
                             "可在仓库目录执行 git remote add origin <地址>，"
                             "再点右上角「重新探测」。",
@@ -441,38 +468,36 @@ def _composer(state: CommitState, vm: CommitViewModel, page: ft.Page) -> ft.Cont
     )
 
 
-def _change_row(change: Change) -> ft.Control:
+def _change_row(change: Change) -> ui.Control:
     """一条变更：类型角标 + 路径 + 类型文字，悬停时淡淡的底色提示可读区域。"""
     style = T.tone_style(_CHANGE_TONES.get(change.kind, Tone.NEUTRAL))
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=T.SPACE_SM, vertical=T.SPACE_XS),
+    return Container(
+        padding=Padding.symmetric(horizontal=SPACE["2"], vertical=SPACE["1"]),
         border_radius=T.RADIUS_SM,
-        content=ft.Row(
-            spacing=T.SPACE_MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        content=Row(
+            spacing=T.FIELD_GAP,
+            vertical_alignment=CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(
-                    width=22,
-                    height=22,
+                Container(
+                    width=20,
+                    height=20,
                     border_radius=T.RADIUS_XS,
                     bgcolor=style.container,
-                    alignment=ft.Alignment.CENTER,
+                    alignment=Alignment.CENTER,
                     content=T.text(
                         change.kind.badge,
                         level=T.TextLevel.CAPTION,
-                        size=11,
-                        weight=ft.FontWeight.W_700,
+                        weight=FontWeight.W_700,
                         color=style.on_container,
                     ),
                 ),
-                ft.Text(
+                Text(
                     change.path,
                     size=12,
                     expand=True,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=TextOverflow.ELLIPSIS,
                     tooltip=change.path,
-                    font_family=T.FONT_FAMILY,
                 ),
                 widgets.muted(change.kind.label, size=11),
             ],

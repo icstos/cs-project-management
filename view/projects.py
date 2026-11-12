@@ -12,7 +12,25 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
+from ui import (
+    SPACE,
+    Column,
+    Container,
+    CrossAxisAlignment,
+    Icons,
+    MainAxisAlignment,
+    PopupMenuButton,
+    PopupMenuItem,
+    ResponsiveRow,
+    Row,
+    ScrollMode,
+    SelectBox,
+    Tag,
+    Text,
+    TextField,
+    TextOverflow,
+)
 
 from models.dtos import Project
 from models.enums import Tone
@@ -28,7 +46,7 @@ from view.view_platform import (
 from viewmodel.formatting import format_relative
 from viewmodel.projects_vm import ProjectFilter, ProjectsViewModel, SortKey
 
-#: 12 列栅格：手机一列、中等窗口两列、宽窗口三列
+#: 12 列栅格：窄窗口一列、中等两列、宽窗口三列
 CARD_COL = {"xs": 12, "md": 6, "xl": 4}
 _SKELETON_CARDS = 6
 
@@ -39,21 +57,21 @@ def ProjectsView(
     vm: ProjectsViewModel,
     platform: FletPlatform,
     on_refresh: Callable[[], None],
-) -> ft.Control:
-    page = ft.context.page
+) -> ui.Control:
+    page = ui.context.page
     state = vm.state
     use_notices(page, vm)
     use_platform_requests(platform, vm)
 
     # 悬停中的卡片 id —— 纯展示状态，用来把投影从"静止"抬到"悬停"
-    hovered, set_hovered = ft.use_state(None)
+    hovered, set_hovered = ui.use_state(None)
 
     # 路径一变就核验一次：手输、粘贴、浏览选目录、打开编辑对话框都汇到这里。
     # 核验本身在线程池里跑（断开的网络盘会让 exists() 阻塞数秒）。
     current_path = state.draft.local_path if state.draft is not None else ""
-    ft.use_effect(lambda: page.run_task(vm.verify_path, current_path), [current_path])
+    ui.use_effect(lambda: page.run_task(vm.verify_path, current_path), [current_path])
 
-    ft.use_dialog(
+    ui.use_dialog(
         project_form_dialog(
             draft=state.draft,
             on_name=vm.change_name,
@@ -68,7 +86,7 @@ def ProjectsView(
         if state.draft is not None
         else None
     )
-    ft.use_dialog(
+    ui.use_dialog(
         delete_project_dialog(
             project=state.pending_delete,
             on_confirm=lambda _: page.run_task(vm.confirm_delete),
@@ -85,16 +103,16 @@ def ProjectsView(
             actions=[
                 widgets.outlined(
                     "刷新状态",
-                    icon=ft.Icons.SYNC,
+                    icon=Icons.SYNC,
                     disabled=state.busy,
                     on_click=lambda _: on_refresh(),
                 ),
-                widgets.filled("添加项目", icon=ft.Icons.ADD, on_click=lambda _: vm.start_create()),
+                widgets.filled("添加项目", icon=Icons.ADD, on_click=lambda _: vm.start_create()),
             ],
         ),
-        body=ft.Column(
+        body=Column(
             expand=True,
-            spacing=T.SPACE_LG,
+            spacing=T.GRID_GUTTER,
             controls=[
                 _toolbar(state=state, vm=vm),
                 _body(
@@ -110,32 +128,30 @@ def ProjectsView(
     )
 
 
-# --------------------------------------------------------------------------- 构件
-def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
+# --------------------------------------------------------------------------- 工具栏
+def _toolbar(*, state, vm: ProjectsViewModel) -> ui.Control:
     counts = state.counts
     projects = state.projects
     matched = len(state.visible)
+
     # 注意：Row(wrap=True) 的子项不能带 expand（Flutter 会因父数据不匹配而报错），
     # 所以把「需要吃掉剩余宽度」的元素放在不换行的第一行。
-    return ft.Column(
-        spacing=T.SPACE_MD,
+    return Column(
+        spacing=T.FIELD_GAP,
         tight=True,
         controls=[
-            ft.Row(
-                spacing=T.SPACE_SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            Row(
+                spacing=SPACE["2"],
+                vertical_alignment=CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Container(
+                    Container(
                         width=320,
-                        content=ft.TextField(
+                        content=TextField(
                             key="project-search",
                             hint_text="搜索名称或路径",
-                            prefix_icon=ft.Icons.SEARCH,
+                            prefix_icon=Icons.SEARCH,
                             value=state.query,
-                            border=T.field_border(),
-                            fill_color=widgets.field_fill(),
                             dense=True,
-                            filled=True,
                             expand=True,
                             on_change=lambda e: vm.set_query(widgets.event_value(e) or ""),
                         ),
@@ -143,7 +159,7 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
                     *(
                         [
                             widgets.icon_action(
-                                ft.Icons.CLOSE,
+                                Icons.CLOSE,
                                 "清空搜索",
                                 lambda _: vm.clear_query(),
                                 size=16,
@@ -152,40 +168,38 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
                         if state.query
                         else []
                     ),
-                    ft.Container(expand=True),
-                    T.text(
+                    Container(expand=True),
+                    widgets.muted(
                         f"显示 {matched}/{len(projects)} 个"
                         if state.filtered
                         else f"共 {len(projects)} 个项目",
-                        level=T.TextLevel.CAPTION,
                         size=11,
-                        color=T.MUTED_TEXT,
                     ),
-                    ft.Container(
+                    Container(
                         width=156,
-                        content=ft.Dropdown(
+                        content=SelectBox(
                             value=state.sort_key.value,
-                            dense=True,
-                            filled=True,
-                            fill_color=widgets.field_fill(),
-                            border=T.field_border(),
                             options=[
-                                ft.dropdown.Option(item.value, item.label) for item in SortKey
+                                ui.SelectOption(key=item.value, text=item.label) for item in SortKey
                             ],
-                            on_select=lambda e: vm.set_sort(SortKey(widgets.event_value(e))),
-                        ),
+                            editable=False,
+                            width=156,
+                            on_change=lambda e: vm.set_sort(
+                                SortKey(widgets.event_value(e) or state.sort_key.value)
+                            ),
+                        ).ui(),
                     ),
                 ],
             ),
-            ft.Row(
-                spacing=T.SPACE_SM,
-                run_spacing=T.SPACE_SM,
+            Row(
+                spacing=SPACE["2"],
+                run_spacing=SPACE["2"],
                 wrap=True,
                 controls=[
-                    widgets.filter_chip(
+                    widgets.choice_chip(
                         f"{item.label} {counts[item]}",
                         selected=state.active_filter is item,
-                        on_select=lambda _, target=item: vm.set_filter(target),
+                        on_click=lambda _, target=item: vm.set_filter(target),
                     )
                     for item in ProjectFilter
                 ],
@@ -194,37 +208,35 @@ def _toolbar(*, state, vm: ProjectsViewModel) -> ft.Control:
     )
 
 
-def _body(*, page: ft.Page, vm: ProjectsViewModel, hovered, on_hover) -> ft.Control:
+def _body(*, page: ui.Page, vm: ProjectsViewModel, hovered, on_hover) -> ui.Control:
     state = vm.state
     if state.busy and not state.projects:
         # 骨架屏：结构与真实卡片一致，避免首屏出现大片空白
-        return ft.ResponsiveRow(
+        return ResponsiveRow(
             spacing=T.GRID_GUTTER,
             run_spacing=T.GRID_GUTTER,
             controls=[widgets.skeleton_card(col=CARD_COL) for _ in range(_SKELETON_CARDS)],
         )
     if not state.projects:
         return widgets.empty_state(
-            ft.Icons.FOLDER_OFF,
+            Icons.FOLDER_OFF,
             "还没有项目",
             "添加一个本地 Git 仓库，开始跟踪分支、变更与提交统计",
-            action=widgets.filled(
-                "添加项目", icon=ft.Icons.ADD, on_click=lambda _: vm.start_create()
-            ),
+            action=widgets.filled("添加项目", icon=Icons.ADD, on_click=lambda _: vm.start_create()),
         )
     if not state.visible:
         return widgets.empty_state(
-            ft.Icons.SEARCH_OFF,
+            Icons.SEARCH_OFF,
             "没有匹配的项目",
             "换个关键词，或把筛选条件切回「全部」",
         )
 
-    return ft.Column(
+    return Column(
         expand=True,
-        scroll=ft.ScrollMode.AUTO,
+        scroll=ScrollMode.AUTO,
         spacing=T.GRID_GUTTER,
         controls=[
-            ft.ResponsiveRow(
+            ResponsiveRow(
                 spacing=T.GRID_GUTTER,
                 run_spacing=T.GRID_GUTTER,
                 controls=[
@@ -244,14 +256,12 @@ def _body(*, page: ft.Page, vm: ProjectsViewModel, hovered, on_hover) -> ft.Cont
 
 def _project_card(
     *,
-    page: ft.Page,
+    page: ui.Page,
     vm: ProjectsViewModel,
     project: Project,
     hovered: bool,
     on_hover,
-) -> ft.Container:
-    warnings = project.warnings
-    dirty_text = f"{project.changed_files} 个文件待提交" if project.changed_files else "工作区干净"
+) -> Container:
     refreshing = vm.state.busy_project == project.id
 
     def handle_hover(event) -> None:
@@ -263,47 +273,58 @@ def _project_card(
         key=f"project-{project.id}",
         hovered=hovered,
         on_hover=handle_hover,
-        content=ft.Column(
-            spacing=T.SPACE_MD,
+        content=Column(
+            spacing=T.FIELD_GAP,
             tight=True,
             controls=[
                 # ---- 标题行：名称 / 路径 / 可见性
-                ft.Row(
-                    spacing=T.SPACE_MD,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                Row(
+                    spacing=SPACE["3"],
+                    vertical_alignment=CrossAxisAlignment.START,
                     controls=[
-                        ft.Column(
-                            spacing=T.SPACE_XXS,
+                        Column(
+                            spacing=SPACE["1"],
                             tight=True,
                             expand=True,
                             controls=[
                                 T.text(
                                     project.name,
                                     level=T.TextLevel.TITLE,
-                                    size=15,
-                                    weight=ft.FontWeight.W_600,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=TextOverflow.ELLIPSIS,
                                 ),
-                                widgets.muted(project.local_path, size=11, max_lines=1),
+                                widgets.muted(project.local_path, size=11),
                             ],
                         ),
                         widgets.permission_pill(project.permission),
                     ],
                 ),
                 # ---- 状态角标组
-                ft.Row(
-                    spacing=T.SPACE_SM,
+                Row(
+                    spacing=SPACE["2"],
                     wrap=True,
-                    run_spacing=T.SPACE_SM,
+                    run_spacing=SPACE["2"],
                     controls=[
                         *(
-                            [widgets.pill(project.branch, icon=ft.Icons.ALT_ROUTE, dense=True)]
+                            [
+                                Tag(
+                                    project.branch,
+                                    role="primary",
+                                    icon=Icons.ALT_ROUTE,
+                                    dense=True,
+                                )
+                            ]
                             if project.branch
                             else []
                         ),
                         widgets.flag_pill("已配置远程", project.has_remote, bad_label="未配置远程"),
-                        widgets.flag_pill("工作区干净", project.is_clean, bad_label="有未提交变更"),
+                        # 工作区状态**只在这里说一次**，并且带上文件数 ——
+                        # 页脚再说一遍"工作区干净"等于占了高度又没说新东西。
+                        widgets.flag_pill(
+                            "工作区干净",
+                            project.is_clean,
+                            bad_label=f"{project.changed_files} 个文件待提交",
+                        ),
                         widgets.flag_pill(
                             "含 .gitignore", project.has_gitignore, bad_label="缺少 .gitignore"
                         ),
@@ -312,7 +333,7 @@ def _project_card(
                                 widgets.pill(
                                     f"{project.ahead} 个提交待推送",
                                     tone=Tone.INFO,
-                                    icon=ft.Icons.UPLOAD,
+                                    icon=Icons.UPLOAD,
                                     dense=True,
                                 )
                             ]
@@ -324,7 +345,7 @@ def _project_card(
                                 widgets.pill(
                                     f"{project.behind} 个提交待拉取",
                                     tone=Tone.WARNING,
-                                    icon=ft.Icons.DOWNLOAD,
+                                    icon=Icons.DOWNLOAD,
                                     dense=True,
                                 )
                             ]
@@ -333,83 +354,68 @@ def _project_card(
                         ),
                     ],
                 ),
+                # 只有"探测异常"才额外铺一块说明面板：未配置远程 / 缺 .gitignore
+                # 上面两枚角标已经说过了，再说一遍等于把同一句话写在两处，
+                # 既占掉一行高度，又让卡片高度参差、整排对不齐。
                 *(
                     [
                         widgets.flat_panel(
                             widgets.hint_row(
-                                ft.Icons.WARNING_AMBER_ROUNDED,
-                                "；".join(warnings),
-                                tone=Tone.WARNING,
+                                Icons.WARNING_AMBER_ROUNDED,
+                                project.last_error,
+                                tone=Tone.DANGER,
                             ),
-                            padding=T.SPACE_MD,
+                            padding=SPACE["3"],
                         )
                     ]
-                    if warnings
+                    if project.last_error
                     else []
                 ),
                 widgets.divider(),
                 # ---- 页脚：变更摘要 + 行内操作
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    alignment=MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Column(
+                        widgets.muted(f"更新于 {format_relative(project.updated_at)}", size=11),
+                        Row(
                             spacing=0,
                             tight=True,
                             controls=[
-                                T.text(
-                                    dirty_text,
-                                    level=T.TextLevel.LABEL,
-                                    size=12,
-                                    color=(
-                                        T.tone_style(Tone.WARNING).accent
-                                        if project.changed_files
-                                        else T.MUTED_TEXT
-                                    ),
-                                ),
-                                widgets.muted(
-                                    f"更新于 {format_relative(project.updated_at)}", size=11
-                                ),
-                            ],
-                        ),
-                        ft.Row(
-                            spacing=0,
-                            tight=True,
-                            controls=[
-                                ft.ProgressRing(width=16, height=16, stroke_width=2)
+                                ui.Loading(size_name="small")
                                 if refreshing
                                 else widgets.icon_action(
-                                    ft.Icons.REFRESH,
+                                    Icons.REFRESH,
                                     "刷新该仓库状态",
                                     lambda _, p=project: page.run_task(vm.refresh_one, p),
                                 ),
                                 widgets.icon_action(
-                                    ft.Icons.EDIT_OUTLINED,
+                                    Icons.EDIT_OUTLINED,
                                     "编辑",
                                     lambda _, p=project: vm.start_edit(p),
                                 ),
-                                ft.PopupMenuButton(
+                                PopupMenuButton(
                                     tooltip="更多操作",
-                                    icon=ft.Icons.MORE_VERT,
+                                    icon=Icons.MORE_VERT,
                                     icon_size=T.ICON_MD,
                                     icon_color=T.MUTED_TEXT,
                                     items=[
-                                        ft.PopupMenuItem(
-                                            content=ft.Text("在文件管理器中打开"),
-                                            icon=ft.Icons.FOLDER_OPEN,
+                                        PopupMenuItem(
+                                            content=Text("在文件管理器中打开", size=13),
+                                            icon=Icons.FOLDER_OPEN,
                                             on_click=lambda _, p=project: page.run_task(
                                                 vm.reveal, p
                                             ),
                                         ),
-                                        ft.PopupMenuItem(
-                                            content=ft.Text("复制本地路径"),
-                                            icon=ft.Icons.CONTENT_COPY,
+                                        PopupMenuItem(
+                                            content=Text("复制本地路径", size=13),
+                                            icon=Icons.CONTENT_COPY,
                                             on_click=lambda _, p=project: vm.request_copy_path(p),
                                         ),
                                     ],
                                 ),
                                 widgets.icon_action(
-                                    ft.Icons.DELETE_OUTLINE,
+                                    Icons.DELETE_OUTLINE,
                                     "移除",
                                     lambda _, p=project: vm.ask_delete(p),
                                     tone=Tone.DANGER,

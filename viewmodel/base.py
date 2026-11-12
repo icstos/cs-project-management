@@ -3,11 +3,11 @@
 三条约定，后面所有视图模型都遵守：
 
 1. **状态不可变**：``state`` 是冻结数据类，任何变化都整体替换。
-   flet 的 :class:`~flet.Observable` 会因此通知所有订阅了本视图模型的组件重新
+   cs-ui（flet）的 :class:`~ui.Observable` 会因此通知所有订阅了本视图模型的组件重新
    渲染，"UI = f(状态)" 于是自动成立。
 2. **通知是一次性的**：``notice`` 带单调递增序号，视图只播报"没见过的那条"，
    因此重复渲染不会把同一条提示弹第二遍。
-3. **不碰 UI 组件**：凡是必须由 flet 控件完成的事情（读写剪贴板、弹系统目录选择、
+3. **不碰 UI 组件**：凡是必须由控件完成的事情（读写剪贴板、弹系统目录选择、
    保存文件），视图模型只发出一个 :class:`PlatformRequest`，由视图执行并回报结果。
    这样视图模型里没有一行 flet 控件代码，也就能脱离界面单独测试。
 """
@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-import flet as ft
+import ui
 
 from models.enums import Tone
 
@@ -70,7 +70,7 @@ class Shortcut:
     ctrl: bool = False
 
 
-class ViewModel[T](ft.Observable):
+class ViewModel[T](ui.Observable):
     """持有不可变状态 ``T``，并在状态变化时自动通知视图重渲染。"""
 
     def __init__(self, state: T) -> None:

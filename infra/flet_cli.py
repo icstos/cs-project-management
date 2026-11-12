@@ -133,10 +133,12 @@ class FletCli:
         项目（含 ``.git``）复制进 ``build/``，那些只读 object 靠 ``flet clean`` 的
         裸 rmtree 删不掉（WinError 5），所以先由程序自己删一遍。
         """
+        # 不带序号：序号由界面统一给（列表左侧的角标从 1 开始）。两边都编号
+        # 会出现"3 2)"这种自相矛盾的行，读的人第一眼就会愣一下。
         return (
-            f"0) 删除 {plan.build_dir}（内置步骤，只读文件也删得掉）",
-            "1) " + format_command(self.clean_argv(plan)),
-            "2) " + format_command(self.build_argv(plan)),
+            f"删除 {plan.build_dir}（内置步骤，只读文件也删得掉）",
+            format_command(self.clean_argv(plan)),
+            format_command(self.build_argv(plan)),
         )
 
     # ------------------------------------------------------------------ 执行

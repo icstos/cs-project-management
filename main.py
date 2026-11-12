@@ -1,10 +1,12 @@
 """应用入口：装配程序、配置页面与窗口，然后挂载根组件。
 
 页面级配置（主题、窗口、标题、字体）集中在这里 —— 组件不直接改 page 属性。
+**主题只有 cs-ui 一个事实源**：``ui.apply_theme`` 同时下发浅色与深色两套主题，
+本模块只负责告诉它"用哪个字体、先按哪一档显示"。
 
 启动顺序有两条硬约束：
 
-1. **日志必须在 ``ft.run`` 之前装配**。flet 只在根 logger 还没有 handler 时才
+1. **日志必须在 ``ui.run`` 之前装配**。框架只在根 logger 还没有 handler 时才
    ``basicConfig``，先装好才能把框架自身的日志一起收进文件。
 2. **异常钩子必须在事件循环内安装**，否则接管不到 asyncio 任务的未捕获异常。
 
@@ -16,8 +18,7 @@ from __future__ import annotations
 import logging
 from functools import partial
 
-import flet as ft
-from flet.version import flet_version
+import ui
 
 from infra import locations
 from models.settings import (
@@ -30,32 +31,31 @@ from models.settings import (
     WINDOW_MIN_WIDTH,
     WINDOW_WIDTH,
 )
-from view import design
 from view.app import App
 from viewmodel.container import Application, build_application
 
 logger = logging.getLogger(__name__)
 
 
-def configure_page(page: ft.Page) -> None:
+def configure_page(page: ui.Page) -> None:
     """把窗口、主题与字体一次性配好。"""
     page.title = f"{APP_NAME} · {APP_TAGLINE}"
+    page.padding = 0
 
     # 自定义字体必须先注册到 page.fonts（值为相对 assets 目录的路径），
     # 主题里的 font_family 才解析得到；漏了这一步字体会静默退回系统默认。
     font_file = locations.font_file()
     if font_file.exists():
         page.fonts = {FONT_FAMILY: FONT_ASSET_PATH}
+        ui.theme_state().font_family = FONT_FAMILY
     else:
         logger.warning("本地字体缺失，回退系统默认字体：%s", font_file)
 
-    # 浅色为默认主题，深色主题同源注册；二者由外壳上的按钮切换（page.theme_mode）。
-    # 两套 Theme 结构完全一致，只有色板不同，因此界面代码不需要区分明暗。
-    page.theme = design.build_theme()
-    page.dark_theme = design.build_dark_theme()
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.bgcolor = ft.Colors.SURFACE
-    page.padding = 0
+    # 浅色为默认（与既有观感一致）；``apply_theme`` 会把明暗两套一起写进
+    # page.theme / page.dark_theme，运行时切换只是换一棵现成的树。
+    theme = ui.theme_state()
+    theme.set_mode("light")
+    ui.apply_theme(page, theme)
 
     window = page.window
     window.width = WINDOW_WIDTH
@@ -71,7 +71,7 @@ def build_main(application: Application):
     无状态的，可以在多个会话之间复用。
     """
 
-    async def main(page: ft.Page) -> None:
+    async def main(page: ui.Page) -> None:
         application.prepare()
         configure_page(page)
         page.render(partial(App, vm=application.create_view_model()))
@@ -83,9 +83,11 @@ def build_main(application: Application):
 
 def run() -> None:
     application = build_application()
-    # 先装配日志再交给 ft.run —— 顺序反了框架日志就进不了文件。
-    application.start(flet_version=flet_version)
-    ft.run(build_main(application), name=APP_NAME)
+    # 先装配日志再交给 ui.run —— 顺序反了框架日志就进不了文件。
+    # 版本号取 cs-ui 的 ui.FLET_VERSION：本工程不再直接依赖 flet 包，
+    # 运行在哪个框架版本上一律问框架自己。
+    application.start(flet_version=ui.FLET_VERSION)
+    ui.run(build_main(application), name=APP_NAME)
 
 
 if __name__ == "__main__":

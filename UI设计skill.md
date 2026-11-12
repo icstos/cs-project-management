@@ -27,14 +27,20 @@
 ### 1.1 间距：8 的倍数 + 12 列栅格
 
 ```python
-SPACE_XXS = 2;  SPACE_XS = 4;  SPACE_SM = 8;   SPACE_MD = 12
-SPACE_LG  = 16; SPACE_XL = 24; SPACE_XXL = 32; SPACE_3XL = 40
+SPACE_XXS = 2
+SPACE_XS = 4
+SPACE_SM = 8
+SPACE_MD = 12
+SPACE_LG = 16
+SPACE_XL = 24
+SPACE_XXL = 32
+SPACE_3XL = 40
 
-PAGE_PADDING    = SPACE_XL   # 页面边距 24
-SECTION_SPACING = SPACE_XL   # 模块间距 24
-GRID_GUTTER     = SPACE_LG   # 卡片栅格 16
-CARD_PADDING    = SPACE_LG   # 卡片内边距 16
-FIELD_GAP       = SPACE_MD   # 表单字段 12
+PAGE_PADDING = SPACE_XL  # 页面边距 24
+SECTION_SPACING = SPACE_XL  # 模块间距 24
+GRID_GUTTER = SPACE_LG  # 卡片栅格 16
+CARD_PADDING = SPACE_LG  # 卡片内边距 16
+FIELD_GAP = SPACE_MD  # 表单字段 12
 ```
 
 * 页面边距优先取 **24**，它给窗口边缘留出的呼吸感最接近"现代桌面应用"。
@@ -78,7 +84,7 @@ def text(value, *, level=TextLevel.BODY, color=None, weight=None, size=None, **k
         value,
         size=size or base.size,
         weight=weight or base.weight,
-        color=color or ft.Colors.ON_SURFACE,   # ← 见下方踩坑 #2，必须兜底
+        color=color or ft.Colors.ON_SURFACE,  # ← 见下方踩坑 #2，必须兜底
         font_family=FONT_FAMILY,
         style=ft.TextStyle(height=base.height, letter_spacing=base.spacing),
         **kw,
@@ -97,8 +103,8 @@ def text(value, *, level=TextLevel.BODY, color=None, weight=None, size=None, **k
 ```python
 @dataclass(frozen=True, slots=True)
 class ToneStyle:
-    accent: ft.ColorValue        # 图标 / 强调文字
-    container: ft.ColorValue     # 胶囊底色、指标图标底色
+    accent: ft.ColorValue  # 图标 / 强调文字
+    container: ft.ColorValue  # 胶囊底色、指标图标底色
     on_container: ft.ColorValue  # 落在 container 上的文字
 ```
 
@@ -112,9 +118,9 @@ class ToneStyle:
 3. 入口同时注册两套 `ft.Theme`：
 
 ```python
-page.theme       = design.build_theme()        # 浅色
-page.dark_theme  = design.build_dark_theme()   # 深色（结构完全相同，只有色板不同）
-page.theme_mode  = ft.ThemeMode.LIGHT
+page.theme = design.build_theme()  # 浅色
+page.dark_theme = design.build_dark_theme()  # 深色（结构完全相同，只有色板不同）
+page.theme_mode = ft.ThemeMode.LIGHT
 ```
 
 4. 切换只需改 `page.theme_mode`。
@@ -122,9 +128,9 @@ page.theme_mode  = ft.ThemeMode.LIGHT
 ```python
 def toggle_theme(_=None):
     next_dark = not dark
-    T.set_dark(next_dark)                        # ① 同步 Python 侧色板
+    T.set_dark(next_dark)  # ① 同步 Python 侧色板
     page.theme_mode = ft.ThemeMode.DARK if next_dark else ft.ThemeMode.LIGHT
-    set_dark_state(next_dark)                    # ② 触发一次重渲染
+    set_dark_state(next_dark)  # ② 触发一次重渲染
 ```
 
 > **为什么需要 `set_dark()`？** 客户端能自己解析 `ft.Colors.*`，但 Python 侧还有查表
@@ -134,9 +140,9 @@ def toggle_theme(_=None):
 ### 1.6 阴影：极淡、向下、分三档
 
 ```python
-card_shadow()        # 静止：offset(0,3) blur 12 opacity 0.05
-card_shadow(hover=1) # 悬停：offset(0,6) blur 20 opacity 0.10
-floating_shadow()    # 浮层：offset(0,12) blur 32 opacity 0.16
+card_shadow()  # 静止：offset(0,3) blur 12 opacity 0.05
+card_shadow(hover=1)  # 悬停：offset(0,6) blur 20 opacity 0.10
+floating_shadow()  # 浮层：offset(0,12) blur 32 opacity 0.16
 ```
 
 * 浅色下阴影 **不要超过 12% 不透明度**，否则立刻变"廉价感"。
@@ -166,11 +172,11 @@ ft.Container(animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT), ...)
 
 ```python
 ft.ButtonStyle(
-    shape=ft.RoundedRectangleBorder(radius=RADIUS_BUTTON),   # 8-12
+    shape=ft.RoundedRectangleBorder(radius=RADIUS_BUTTON),  # 8-12
     padding=ft.Padding.symmetric(horizontal=18, vertical=12),
-    elevation={DEFAULT: 0, HOVERED: 1, PRESSED: 0, DISABLED: 0},   # 悬停"轻微浮起"
+    elevation={DEFAULT: 0, HOVERED: 1, PRESSED: 0, DISABLED: 0},  # 悬停"轻微浮起"
     shadow_color=with_opacity(0.22, "#0B0E14"),
-    overlay_color=with_opacity(0.12, ON_PRIMARY),                  # 按下反馈
+    overlay_color=with_opacity(0.12, ON_PRIMARY),  # 按下反馈
     animation_duration=ft.Duration(milliseconds=200),
     mouse_cursor=ft.MouseCursor.CLICK,
 )
@@ -185,9 +191,9 @@ ft.ButtonStyle(
 
 ```python
 ft.Container(
-    bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,   # 浅色=白，深色=比页面亮一档
+    bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,  # 浅色=白，深色=比页面亮一档
     border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
-    border_radius=RADIUS_CARD,                 # 12-16
+    border_radius=RADIUS_CARD,  # 12-16
     shadow=card_shadow(),
     animate=ft.Animation(200, EASE_OUT),
 )
@@ -201,7 +207,7 @@ ft.Container(
 
 ```python
 ft.TextField(
-    border=design.field_border(),        # ⚠️ 不是 border_radius（1.0 已废弃）
+    border=design.field_border(),  # ⚠️ 不是 border_radius（1.0 已废弃）
     filled=True,
     fill_color=with_opacity(0.045, ft.Colors.ON_SURFACE),  # 注意是 ColorValue，不是状态字典
     dense=True,
@@ -212,7 +218,9 @@ ft.TextField(
 def field_border(radius=RADIUS_INPUT):
     return {
         FOCUSED: ft.OutlineInputBorder(border_radius=radius, side=ft.BorderSide(2, PRIMARY)),
-        DEFAULT: ft.OutlineInputBorder(border_radius=radius, side=ft.BorderSide(1, OUTLINE_VARIANT)),
+        DEFAULT: ft.OutlineInputBorder(
+            border_radius=radius, side=ft.BorderSide(1, OUTLINE_VARIANT)
+        ),
     }
 ```
 
@@ -274,7 +282,7 @@ Flet 1.0 的组件在每次渲染结束后会把返回的控件 `_frozen = True`
 **所以"悬停时阴影加深"不能这样写：**
 
 ```python
-def on_hover(e):                 # ❌ 会抛异常
+def on_hover(e):  # ❌ 会抛异常
     e.control.shadow = deeper
     e.control.update()
 ```
@@ -284,9 +292,11 @@ def on_hover(e):                 # ❌ 会抛异常
 ```python
 hovered, set_hovered = ft.use_state(None)
 
+
 def handle_hover(event, project):
     entering = str(widgets.event_value(event)).lower() == "true"
     set_hovered(project.id if entering else None)
+
 
 # 卡片
 widgets.surface(..., hovered=hovered == project.id, on_hover=handle_hover)
@@ -301,8 +311,8 @@ widgets.surface(..., hovered=hovered == project.id, on_hover=handle_hover)
 缺省色会落到**白色**——浅色主题下就是"完全看不见的字"，而且没有任何报错。
 
 ```python
-ft.Text("标题", style=ft.TextStyle(height=1.3))            # ❌ 可能是白字
-ft.Text("标题", color=ft.Colors.ON_SURFACE, style=...)     # ✅
+ft.Text("标题", style=ft.TextStyle(height=1.3))  # ❌ 可能是白字
+ft.Text("标题", color=ft.Colors.ON_SURFACE, style=...)  # ✅
 ```
 
 同理，所有显式文本样式（`Theme.text_theme`、`DataTable.data_text_style`、
@@ -314,7 +324,7 @@ ft.Text("标题", color=ft.Colors.ON_SURFACE, style=...)     # ✅
 **release 版客户端只会画出一个灰色方块**，不报错、不写日志，极难定位。
 
 ```python
-ft.Row(wrap=True, controls=[ft.Container(expand=True), ...])   # ❌ 整块变灰
+ft.Row(wrap=True, controls=[ft.Container(expand=True), ...])  # ❌ 整块变灰
 ```
 
 **排查经验**：界面某块渲染成**纯灰矩形**（`#C4C4C4`）＝ 该子树在客户端抛了异常。
@@ -328,13 +338,13 @@ ft.Row(wrap=True, controls=[ft.Container(expand=True), ...])   # ❌ 整块变�
 
 ```python
 ft.NavigationRail(
-    indicator_color=ft.Colors.PRIMARY_CONTAINER,        # ✅ 写在控件上才生效
+    indicator_color=ft.Colors.PRIMARY_CONTAINER,  # ✅ 写在控件上才生效
     indicator_shape=ft.RoundedRectangleBorder(radius=RADIUS_MD),
     selected_label_text_style=T.text_style(11, ...),
     unselected_label_text_style=T.text_style(11, ...),
 )
 
-ft.AlertDialog(bgcolor=T.CARD_COLOR, shape=...)          # ✅ 同理
+ft.AlertDialog(bgcolor=T.CARD_COLOR, shape=...)  # ✅ 同理
 ```
 
 **结论**：`Theme` 负责"没显式指定时的兜底"，关键外观一律在控件上写明。

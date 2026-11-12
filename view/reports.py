@@ -1,18 +1,38 @@
 """统计页：趋势图、可排序明细表与 CSV 导出。
 
-图表刻度与轴标签宽度的取值理由见 :func:`_bar_chart` 的注释 —— 那些是踩过坑的教训，
-改动前请先确认在深色/浅色主题下都仍然可读。
-
-版式上按"概览 → 趋势 → 明细"三层递进：先给六个指标卡，再给趋势图，最后给可排序
+版式按"概览 → 趋势 → 明细"三层递进：先给六个指标卡，再给趋势图，最后给可排序
 的明细表，信息密度从低到高，符合"先扫一眼结论、再逐行核对"的阅读顺序。
+
+图表用 cs-ui 的 :class:`ui.BarChart`（继承自 flet-charts，配色与网格由框架按
+语义色派生），因此换主色 / 切明暗时曲线与网格会一起变，不需要在这里写色值。
 """
 
 from __future__ import annotations
 
-import math
-
-import flet as ft
-import flet_charts as fc
+import ui
+from ui import (
+    SPACE,
+    Alignment,
+    BarChart,
+    Column,
+    Container,
+    CrossAxisAlignment,
+    DataCell,
+    DataColumn,
+    DataRow,
+    DataTable,
+    FontWeight,
+    Icon,
+    Icons,
+    MainAxisAlignment,
+    ResponsiveRow,
+    Row,
+    ScrollMode,
+    SelectBox,
+    Table,
+    Text,
+    TextOverflow,
+)
 
 from models.dtos import CommitRow, TrendPoint
 from models.enums import Tone
@@ -23,19 +43,16 @@ from view.view_platform import FletPlatform, use_notices, use_platform_requests
 from viewmodel.formatting import format_count, format_datetime, format_day
 from viewmodel.reports_vm import COLUMNS, RANGES, ReportsState, ReportsViewModel
 
-#: 左侧读数区宽度，需容得下 "-10,000"
-_Y_LABEL_SIZE = 52
-
 
 @guarded
-def ReportsView(*, vm: ReportsViewModel, platform: FletPlatform) -> ft.Control:
-    page = ft.context.page
+def ReportsView(*, vm: ReportsViewModel, platform: FletPlatform) -> ui.Control:
+    page = ui.context.page
     state = vm.state
     use_notices(page, vm)
     use_platform_requests(platform, vm)
 
     # 项目 / 时间范围一变就重新聚合
-    ft.use_effect(lambda: page.run_task(vm.load), [state.project_id, state.days])
+    ui.use_effect(lambda: page.run_task(vm.load), [state.project_id, state.days])
 
     return widgets.page_shell(
         header=widgets.page_header(
@@ -44,13 +61,13 @@ def ReportsView(*, vm: ReportsViewModel, platform: FletPlatform) -> ft.Control:
             actions=[
                 widgets.outlined(
                     "导出 CSV",
-                    icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+                    icon=Icons.FILE_DOWNLOAD_OUTLINED,
                     disabled=not state.can_export,
                     on_click=lambda _: vm.request_export(),
                 ),
                 widgets.filled(
                     "同步中…" if state.syncing else "同步历史",
-                    icon=ft.Icons.CLOUD_SYNC,
+                    icon=Icons.CLOUD_SYNC,
                     disabled=state.syncing or not state.projects,
                     tooltip="从各仓库读取 git log 并写入本地统计库",
                     on_click=lambda _: page.run_task(vm.sync_history),
@@ -60,53 +77,73 @@ def ReportsView(*, vm: ReportsViewModel, platform: FletPlatform) -> ft.Control:
         # 整页滚动：固定高度的图表 + 全量展开的明细表。
         # 若把明细表设成 expand 并让它内部滚动，小窗口下表格只剩一两行，
         # 反而是"能不能读完"的问题。
-        body=ft.Column(
+        body=Column(
             key="reports-body",
             expand=True,
-            scroll=ft.ScrollMode.AUTO,
-            spacing=T.SECTION_SPACING,
+            scroll=ScrollMode.AUTO,
+            spacing=T.SECTION_GAP,
             controls=[
                 _toolbar(state, vm),
                 _metrics(state),
-                _trend_card(state.trend),
-                _table_card(state, vm),
+                *_report_body(state, vm),
             ],
         ),
     )
 
 
+def _report_body(state: ReportsState, vm: ReportsViewModel) -> list[ui.Control]:
+    """图表 + 明细；**一条记录都没有**时合成一块空态。
+
+    两块都空着会出现上下两张大白板、各写一句"没有数据"，用户还得自己判断
+    哪一块才是"下一步"。空态只留一份，并给出具体的下一步动作。
+    """
+    if state.rows or state.loading:
+        return [_trend_card(state.trend), _table_card(state, vm)]
+    return [
+        widgets.surface(
+            height=260,
+            content=widgets.empty_state(
+                Icons.QUERY_STATS,
+                "暂无统计数据",
+                "先添加项目，再点右上角「同步历史」采集各仓库的 git 提交记录",
+            ),
+        )
+    ]
+
+
 # --------------------------------------------------------------------------- 构件
-def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
+def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ui.Control:
     # Row(wrap=True) 的子项不能带 expand：这里把需要撑开的元素放在第一行
     def pick_project(event) -> None:
         value = widgets.event_value(event)
         vm.set_project(None if value in (None, "all") else int(value))
 
     report = state.report
-    return ft.Column(
-        spacing=T.SPACE_MD,
+    return Column(
+        spacing=T.FIELD_GAP,
         tight=True,
         controls=[
-            ft.Row(
-                spacing=T.SPACE_SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            Row(
+                spacing=SPACE["2"],
+                vertical_alignment=CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Container(
+                    Container(
                         width=240,
-                        content=ft.Dropdown(
-                            dense=True,
-                            filled=True,
-                            fill_color=widgets.field_fill(),
-                            border=T.field_border(),
+                        content=SelectBox(
                             value=str(state.project_id) if state.project_id is not None else "all",
                             options=[
-                                ft.dropdown.Option("all", "全部项目"),
-                                *[ft.dropdown.Option(str(p.id), p.name) for p in state.projects],
+                                ui.SelectOption(key="all", text="全部项目"),
+                                *[
+                                    ui.SelectOption(key=str(p.id), text=p.name)
+                                    for p in state.projects
+                                ],
                             ],
-                            on_select=pick_project,
-                        ),
+                            editable=False,
+                            width=240,
+                            on_change=pick_project,
+                        ).ui(),
                     ),
-                    ft.Container(expand=True),
+                    Container(expand=True),
                     *(
                         [
                             widgets.muted(
@@ -119,15 +156,15 @@ def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
                     ),
                 ],
             ),
-            ft.Row(
-                spacing=T.SPACE_SM,
-                run_spacing=T.SPACE_SM,
+            Row(
+                spacing=SPACE["2"],
+                run_spacing=SPACE["2"],
                 wrap=True,
                 controls=[
-                    widgets.filter_chip(
+                    widgets.choice_chip(
                         label,
                         selected=state.days == value,
-                        on_select=lambda _, target=value: vm.set_days(target),
+                        on_click=lambda _, target=value: vm.set_days(target),
                     )
                     for label, value in RANGES
                 ],
@@ -136,22 +173,32 @@ def _toolbar(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
     )
 
 
-def _metrics(state: ReportsState) -> ft.Control:
+def _signed(value: int, sign: str) -> str:
+    """带方向的正负数。零不戴符号 —— "+0" / "-0" 读起来像一个 bug。"""
+    return f"{sign}{format_count(abs(value))}" if value else "0"
+
+
+def _metrics(state: ReportsState) -> ui.Control:
     totals = state.totals
     cells = (
-        ("提交数", format_count(totals.commits), Tone.PRIMARY, ft.Icons.COMMIT),
-        ("新增行", f"+{format_count(totals.insertions)}", Tone.SUCCESS, ft.Icons.ADD),
-        ("删除行", f"-{format_count(totals.deletions)}", Tone.DANGER, ft.Icons.REMOVE),
-        ("净增行", f"{totals.net:+,}", Tone.INFO, ft.Icons.STACKED_LINE_CHART),
+        ("提交数", format_count(totals.commits), Tone.PRIMARY, Icons.COMMIT),
+        ("新增行", _signed(totals.insertions, "+"), Tone.SUCCESS, Icons.ADD),
+        ("删除行", _signed(-totals.deletions, "-"), Tone.DANGER, Icons.REMOVE),
+        (
+            "净增行",
+            _signed(totals.net, "+" if totals.net >= 0 else "-"),
+            Tone.INFO,
+            Icons.STACKED_LINE_CHART,
+        ),
         (
             "变更文件",
             format_count(totals.files_changed),
             Tone.WARNING,
-            ft.Icons.FILE_PRESENT_OUTLINED,
+            Icons.FILE_PRESENT_OUTLINED,
         ),
-        ("活跃项目", format_count(totals.active_projects), Tone.NEUTRAL, ft.Icons.FOLDER_OUTLINED),
+        ("活跃项目", format_count(totals.active_projects), Tone.NEUTRAL, Icons.FOLDER_OUTLINED),
     )
-    return ft.ResponsiveRow(
+    return ResponsiveRow(
         spacing=T.GRID_GUTTER,
         run_spacing=T.GRID_GUTTER,
         controls=[
@@ -163,36 +210,35 @@ def _metrics(state: ReportsState) -> ft.Control:
     )
 
 
-def _trend_card(trend: tuple[TrendPoint, ...]) -> ft.Control:
+def _trend_card(trend: tuple[TrendPoint, ...]) -> ui.Control:
     has_data = any(point.insertions or point.deletions for point in trend)
 
     return widgets.surface(
-        content=ft.Column(
-            spacing=T.SPACE_LG,
+        content=Column(
+            spacing=T.GRID_GUTTER,
             tight=True,
             controls=[
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    alignment=MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     wrap=True,
-                    run_spacing=T.SPACE_SM,
+                    run_spacing=SPACE["2"],
                     controls=[
-                        ft.Row(
-                            spacing=T.SPACE_SM,
+                        Row(
+                            spacing=SPACE["2"],
                             tight=True,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=CrossAxisAlignment.CENTER,
                             controls=[
                                 T.text(
                                     "每日代码增减",
                                     level=T.TextLevel.TITLE,
-                                    size=14,
-                                    weight=ft.FontWeight.W_600,
+                                    weight=FontWeight.W_600,
                                 ),
                                 widgets.pill(f"最近 {len(trend)} 天", dense=True),
                             ],
                         ),
-                        ft.Row(
-                            spacing=T.SPACE_LG,
+                        Row(
+                            spacing=SPACE["4"],
                             tight=True,
                             controls=[
                                 _legend_item(T.addition_color(), "新增行"),
@@ -203,100 +249,70 @@ def _trend_card(trend: tuple[TrendPoint, ...]) -> ft.Control:
                 ),
                 _bar_chart(trend)
                 if has_data
-                else ft.Container(
-                    height=T.CHART_HEIGHT,
-                    alignment=ft.Alignment.CENTER,
-                    content=widgets.muted("所选时间范围内没有提交记录", size=12),
+                # 空图表不留 260px 的空白：一行图标 + 说明就够，
+                # 否则整页看起来像"加载失败"，还白白挤走了下面的表格。
+                else Container(
+                    height=120,
+                    alignment=Alignment.CENTER,
+                    content=Row(
+                        spacing=SPACE["2"],
+                        tight=True,
+                        vertical_alignment=CrossAxisAlignment.CENTER,
+                        controls=[
+                            Icon(Icons.INSIGHTS, size=T.ICON_MD, color=T.MUTED_TEXT),
+                            widgets.muted("所选时间范围内没有提交记录", size=12),
+                        ],
+                    ),
                 ),
             ],
         )
     )
 
 
-def _legend_item(color: ft.ColorValue, label: str) -> ft.Row:
-    return ft.Row(
-        spacing=T.SPACE_XS,
+def _legend_item(color, label: str) -> Row:
+    return Row(
+        spacing=SPACE["1"],
         tight=True,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=CrossAxisAlignment.CENTER,
         controls=[
-            ft.Container(width=10, height=10, border_radius=3, bgcolor=color),
+            Container(width=8, height=8, border_radius=T.RADIUS_XS, bgcolor=color),
             widgets.muted(label, size=11),
         ],
     )
 
 
-def _bar_chart(trend: tuple[TrendPoint, ...]) -> ft.Control:
-    peak = max((max(point.insertions, point.deletions) for point in trend), default=0)
-    low, high = (-peak * 1.2, peak * 1.15) if peak else (-1, 1)
-    step = _nice_step(peak)
-    label_step = max(1, len(trend) // 8)
+def _bar_chart(trend: tuple[TrendPoint, ...]) -> ui.Control:
+    """每日新增向上、删除向下：一条 0 基线把两种方向分成两半。
 
-    return fc.BarChart(
+    ``min_y`` / ``max_y`` 按峰值对称留 15% 余量 —— 让正负两侧的视觉长度可比，
+    否则"删除比新增多"要靠读数字才能看出来。``stacked=True`` 让两根柱子共用
+    同一个 x 位置（正值向上、负值向下），不会左右错开各占一格。
+    """
+    peak = max((max(point.insertions, point.deletions) for point in trend), default=0)
+    bound = peak * 1.15 or 1
+
+    return BarChart(
+        data={
+            "日期": [format_day(point.day) for point in trend],
+            "新增": [point.insertions for point in trend],
+            "删除": [-point.deletions for point in trend],
+        },
+        x="日期",
+        y=["新增", "删除"],
+        color=[T.addition_color(), T.deletion_color()],
         height=T.CHART_HEIGHT,
-        interactive=True,
-        group_spacing=0.25,
+        stacked=True,
+        group_spacing=6,
+        rod_width=7,
+        border_radius=3,
+        tooltip=True,
+        min_y=-bound,
+        max_y=bound,
         baseline_y=0,
-        min_y=low,
-        max_y=high,
-        groups=[
-            fc.BarChartGroup(
-                x=index,
-                group_vertically=True,
-                rods=[
-                    fc.BarChartRod(
-                        from_y=0,
-                        to_y=point.insertions,
-                        width=7,
-                        color=T.addition_color(),
-                        border_radius=2,
-                        show_tooltip=True,
-                        tooltip=(
-                            f"{point.day.strftime('%m-%d')} 新增 {point.insertions} 行"
-                            f" / {point.commits} 次提交"
-                        ),
-                    ),
-                    fc.BarChartRod(
-                        from_y=0,
-                        to_y=-point.deletions,
-                        width=7,
-                        color=T.deletion_color(),
-                        border_radius=2,
-                        show_tooltip=True,
-                        tooltip=f"{point.day.strftime('%m-%d')} 删除 {point.deletions} 行",
-                    ),
-                ],
-            )
-            for index, point in enumerate(trend)
-        ],
-        bottom_axis=fc.ChartAxis(
-            show_labels=True,
-            label_size=18,
-            labels=[
-                fc.ChartAxisLabel(value=index, label=widgets.chart_label(format_day(point.day)))
-                for index, point in enumerate(trend)
-                if index % label_step == 0 or index == len(trend) - 1
-            ],
-        ),
-        # label_size 是"每个标签占用的空间"：左侧要放得下 "-10,000" 这样的读数，
-        # 留 10px 会把标签压没，这里按最长读数的宽度预留。
-        left_axis=fc.ChartAxis(
-            show_labels=True,
-            label_size=_Y_LABEL_SIZE,
-            labels=[
-                fc.ChartAxisLabel(value=value, label=widgets.chart_label(format_count(value)))
-                for value in _axis_values(low, high, step)
-            ],
-        ),
-        horizontal_grid_lines=fc.ChartGridLines(
-            interval=step,
-            color=ft.Colors.with_opacity(0.5, T.BORDER_COLOR),
-            width=1,
-        ),
-        border=ft.Border.all(0, ft.Colors.TRANSPARENT),
     )
 
 
-def _table_card(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
+def _table_card(state: ReportsState, vm: ReportsViewModel) -> ui.Control:
     rows = state.rows
     if state.loading and not rows:
         return widgets.skeleton_block(rows=5, text="正在汇总提交记录…")
@@ -304,136 +320,109 @@ def _table_card(state: ReportsState, vm: ReportsViewModel) -> ft.Control:
         return widgets.surface(
             height=T.CHART_HEIGHT,
             content=widgets.empty_state(
-                ft.Icons.QUERY_STATS,
+                Icons.QUERY_STATS,
                 "暂无统计数据",
                 "先添加项目，再点击右上角「同步历史」采集 git 提交记录",
             ),
         )
 
     return widgets.surface(
-        padding=T.SPACE_LG,
-        content=ft.Column(
-            spacing=T.SPACE_SM,
+        content=Column(
+            spacing=SPACE["2"],
             tight=True,
             controls=[
-                ft.Row(
-                    spacing=T.SPACE_SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                Row(
+                    spacing=SPACE["2"],
+                    vertical_alignment=CrossAxisAlignment.CENTER,
                     controls=[
                         T.text(
                             "提交明细",
                             level=T.TextLevel.TITLE,
-                            size=14,
-                            weight=ft.FontWeight.W_600,
+                            weight=FontWeight.W_600,
                         ),
                         widgets.pill(f"{len(rows)} 条", dense=True),
-                        ft.Container(expand=True),
+                        Container(expand=True),
                         widgets.muted("点击表头可排序", size=11),
                     ],
                 ),
-                ft.DataTable(
-                    columns=[
-                        ft.DataColumn(
-                            ft.Text(column.label, font_family=T.FONT_FAMILY),
-                            numeric=column.numeric,
-                            on_sort=lambda event: vm.sort_by(event.column_index, event.ascending),
-                        )
-                        for column in COLUMNS
-                    ],
-                    rows=[_table_row(row) for row in rows],
-                    sort_column_index=state.sort_index,
-                    sort_ascending=state.sort_ascending,
-                    border=ft.Border.all(0, ft.Colors.TRANSPARENT),
-                    border_radius=T.RADIUS_MD,
-                    column_spacing=20,
-                    heading_row_height=44,
-                    data_row_max_height=48,
+                Table(
+                    data_table=DataTable(
+                        columns=[
+                            DataColumn(
+                                Text(column.label, size=12, weight=FontWeight.W_600),
+                                numeric=column.numeric,
+                                on_sort=lambda event: vm.sort_by(
+                                    event.column_index, event.ascending
+                                ),
+                            )
+                            for column in COLUMNS
+                        ],
+                        rows=[_table_row(row) for row in rows],
+                        sort_column_index=state.sort_index,
+                        sort_ascending=state.sort_ascending,
+                        column_spacing=20,
+                        heading_row_height=40,
+                        data_row_max_height=44,
+                    ),
+                    with_number=False,
+                    with_paged=False,
+                    zebra=True,
+                    expand=False,
                 ),
             ],
-        ),
+        )
     )
 
 
-def _table_row(row: CommitRow) -> ft.DataRow:
+def _table_row(row: CommitRow) -> DataRow:
     commit = row.commit
-    return ft.DataRow(
+    return DataRow(
         cells=[
-            ft.DataCell(
-                ft.Text(
+            DataCell(
+                Text(
                     row.project_name,
                     size=12,
-                    weight=ft.FontWeight.W_500,
+                    weight=FontWeight.W_500,
                     max_lines=1,
-                    font_family=T.FONT_FAMILY,
+                    overflow=TextOverflow.ELLIPSIS,
                 )
             ),
-            ft.DataCell(
-                ft.Container(
+            DataCell(
+                Container(
                     width=340,
-                    content=ft.Text(
+                    content=Text(
                         commit.message,
                         size=12,
                         max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
+                        overflow=TextOverflow.ELLIPSIS,
                         tooltip=commit.message,
-                        font_family=T.FONT_FAMILY,
                     ),
                 )
             ),
-            ft.DataCell(widgets.muted(commit.author or "—", size=12)),
-            ft.DataCell(
-                ft.Text(
+            DataCell(widgets.muted(commit.author or "—", size=12)),
+            DataCell(
+                Text(
                     format_datetime(commit.committed_at),
                     size=12,
                     tooltip=f"提交 {commit.short_hash}",
-                    font_family=T.FONT_FAMILY,
                 )
             ),
-            ft.DataCell(
+            DataCell(
                 T.text(
                     f"+{format_count(commit.insertions)}",
                     level=T.TextLevel.LABEL,
-                    size=12,
                     color=T.addition_color(),
-                    weight=ft.FontWeight.W_600,
+                    weight=FontWeight.W_600,
                 )
             ),
-            ft.DataCell(
+            DataCell(
                 T.text(
                     f"-{format_count(commit.deletions)}",
                     level=T.TextLevel.LABEL,
-                    size=12,
                     color=T.deletion_color(),
-                    weight=ft.FontWeight.W_600,
+                    weight=FontWeight.W_600,
                 )
             ),
-            ft.DataCell(
-                ft.Text(format_count(commit.files_changed), size=12, font_family=T.FONT_FAMILY)
-            ),
+            DataCell(Text(format_count(commit.files_changed), size=12)),
         ]
     )
-
-
-# --------------------------------------------------------------------------- 纯函数
-def _nice_step(peak: int, *, divisions: int = 4) -> int:
-    """刻度间隔取 1/2/5×10ⁿ，避免轴上出现 10,693 这类难以速读的读数。"""
-    if peak <= 0:
-        return 1
-    rough = peak / divisions
-    magnitude = 10 ** math.floor(math.log10(rough))
-    for factor in (1, 2, 5):
-        if factor * magnitude >= rough:
-            return int(factor * magnitude)
-    return int(10 * magnitude)
-
-
-def _axis_values(low: float, high: float, step: int) -> list[int]:
-    """落在可视范围内的刻度值（含 0 基线）。"""
-    if step <= 0:
-        return [0]
-    value = math.ceil(low / step) * step
-    ticks = []
-    while value <= high:
-        ticks.append(int(value))
-        value += step
-    return ticks

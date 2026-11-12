@@ -7,7 +7,13 @@ name = "cs-project-management"
 version = "1.0.0"
 description = "CS 项目管理桌面应用：本地 Git 项目的台账、提交与统计"
 requires-python = ">=3.12"
-dependencies = ["flet==1.0.4", "flet-charts==1.0.4", "sqlmodel>=0.0.39"]
+# UI 只依赖本地的 cs-ui（`import ui`）：flet / flet-charts 由它带入，本工程不直接引用。
+# cs-ui 目前是本地可编辑安装，所以这里给**直接引用**（file URL）——PyPI 上没有这个包，
+# 写 `cs-ui>=0.2.0` 会让 `flet build` 在装依赖那一步解析失败。
+dependencies = [
+    "cs-ui @ file:///D:/CSTOS/projects/cs-ui",
+    "sqlmodel>=0.0.39",
+]
 
 [project.optional-dependencies]
 dev = ["ruff>=0.6"]
