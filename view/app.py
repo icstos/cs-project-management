@@ -379,7 +379,8 @@ def App(*, vm: AppViewModel) -> ui.Control:
     """根组件：装配页面级平台服务，再交给外壳渲染。"""
     page = ui.context.page
     clipboard = ui.use_ref(ui.Clipboard).current
-    picker = ui.use_ref(ui.FilePicker).current
-    platform = ui.use_ref(lambda: FletPlatform(page, clipboard, picker)).current
+    # 命令式系统对话框：渲染期构造即注册到当前页，一个会话只建一份
+    dialog = ui.use_ref(ui.FileDialog).current
+    platform = ui.use_ref(lambda: FletPlatform(page, clipboard, dialog)).current
 
     return SafeArea(expand=True, content=AppShell(vm=vm, platform=platform))

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 
 import ui
-from ui import FilePicker, FilePickerFileType, Page
+from ui import Page
 
 from models.enums import Tone
 from view import widgets
@@ -26,12 +26,18 @@ __all__ = ["FletPlatform", "use_notices", "use_platform_requests", "use_shortcut
 
 
 class FletPlatform:
-    """一次会话一份：剪贴板与文件选择器都是页面级服务，不能重复注册。"""
+    """一次会话一份：剪贴板与对话框服务都是页面级的，不能重复注册。
 
-    def __init__(self, page: Page, clipboard: ui.Clipboard, picker: FilePicker) -> None:
+    ``dialog`` 是 cs-ui 的命令式对话框（:class:`ui.FileDialog`）：``await`` 一次
+    拿到一个 ``Path``，用户取消返回 ``None``，失败抛 ``FileDialogError`` ——
+    视图模型因此不必认识任何控件，还能把「用户反悔」与「对话框没弹出来」分开。
+    这里**不碰 flet**：``ui`` 已经把系统对话框包好了。
+    """
+
+    def __init__(self, page: Page, clipboard: ui.Clipboard, dialog: ui.FileDialog) -> None:
         self.page = page
         self._clipboard = clipboard
-        self._picker = picker
+        self._dialog = dialog
 
     async def perform(self, request: PlatformRequest, vm: ViewModel) -> None:
         """执行一条平台请求，并把结果回报给发起它的视图模型。"""
@@ -78,27 +84,27 @@ class FletPlatform:
     # ------------------------------------------------------------------ 对话框
     async def _pick_directory(self, title: str, vm: ViewModel) -> None:
         try:
-            selected = await self._picker.get_directory_path(dialog_title=title or None)
-        except Exception as exc:
+            folder = await self._dialog.pick_directory(title=title)
+        except ui.FileDialogError as exc:
             logger.warning("打开目录选择框失败：%s", exc)
-            vm.notify(f"打开目录选择框失败：{exc}")
+            vm.notify(f"打开目录选择框失败：{exc}", Tone.DANGER)
             return
-        vm.accept_directory(selected or "")
+        # 取消与失败是两件事：取消只是空串，界面保持原值不动
+        vm.accept_directory(str(folder) if folder else "")
 
     async def _save_file(self, request: PlatformRequest, vm: ViewModel) -> None:
         try:
-            saved = await self._picker.save_file(
-                dialog_title="导出提交明细",
+            saved = await self._dialog.save_file(
+                title="导出提交明细",
                 file_name=request.text,
-                file_type=FilePickerFileType.CUSTOM,
-                allowed_extensions=["csv"],
-                src_bytes=request.data,
+                extensions=["csv"],
+                data=request.data,
             )
-        except Exception as exc:
+        except ui.FileDialogError as exc:
             logger.warning("保存文件失败：%s", exc)
             vm.export_finished(None, str(exc))
             return
-        vm.export_finished(saved)
+        vm.export_finished(str(saved) if saved else None)
 
 
 # --------------------------------------------------------------------------- 钩子
