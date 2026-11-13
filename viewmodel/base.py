@@ -5,10 +5,12 @@
 1. **状态不可变**：``state`` 是冻结数据类，任何变化都整体替换。
    cs-ui（flet）的 :class:`~ui.Observable` 会因此通知所有订阅了本视图模型的组件重新
    渲染，"UI = f(状态)" 于是自动成立。
-2. **通知是一次性的**：``notice`` 带单调递增序号，视图只播报"没见过的那条"，
-   因此重复渲染不会把同一条提示弹第二遍。
+2. **通知是一次性的**：``notice`` 带单调递增序号，视图经 :meth:`ViewModel.claim_notice`
+   取走要播的那条，因此重复渲染、切页签回来都不会把同一条提示弹第二遍。
 3. **不碰 UI 组件**：凡是必须由控件完成的事情（读写剪贴板、弹系统目录选择、
    保存文件），视图模型只发出一个 :class:`PlatformRequest`，由视图执行并回报结果。
+   同理，请求也经 :meth:`ViewModel.claim_request` 一次性取走 —— 它是个**事件**而不是
+   状态，留在字段里让视图反复看到就会把历史操作重做一遍。
    这样视图模型里没有一行 flet 控件代码，也就能脱离界面单独测试。
 """
 
@@ -77,8 +79,11 @@ class ViewModel[T](ui.Observable):
         self._notice_seq = 0
         self._request_seq = 0
         self.notice: Notice | None = None
-        #: 最近一次平台请求；视图订阅它并在变化时执行
+        self._announced_seq = 0
+        #: 最近一条平台请求。它**只**用来给视图做"有新请求"的变更比较，
+        #: 真正要执行的那条必须经 :meth:`claim_request` 取走。
         self.request: PlatformRequest | None = None
+        self._unclaimed: PlatformRequest | None = None
         self.state = state
 
     # ------------------------------------------------------------------ 状态
@@ -96,6 +101,19 @@ class ViewModel[T](ui.Observable):
         self._notice_seq += 1
         self.notice = Notice(self._notice_seq, message, tone)
 
+    def claim_notice(self) -> Notice | None:
+        """取走尚未播报的提示；已经播过（或没有）返回 ``None``。
+
+        为什么不让视图自己记"上一条播过的是哪条"：视图里的 ref 是**组件实例级**
+        的，切页签回来组件是重新挂载，ref 归零 —— 上一条提示会被当成新的再弹一次。
+        判定权放在视图模型（它的生命期与业务状态一致）才不会跟着界面走。
+        """
+        notice = self.notice
+        if notice is None or notice.seq <= self._announced_seq:
+            return None
+        self._announced_seq = notice.seq
+        return notice
+
     def fail(self, action: str, exc: BaseException) -> None:
         """统一的失败上报：留一条带堆栈的日志，并给用户一句人话。"""
         logger.warning("%s失败：%s", action, exc)
@@ -111,7 +129,22 @@ class ViewModel[T](ui.Observable):
     ) -> PlatformRequest:
         self._request_seq += 1
         request = PlatformRequest(self._request_seq, action, text, data)
+        # 先挂待执行的，再发布变更信号：`request` 的赋值会立刻触发重渲染，
+        # 视图在那一次渲染的 effect 里就要能 claim 到东西。
+        self._unclaimed = request
         self.request = request
+        return request
+
+    def claim_request(self) -> PlatformRequest | None:
+        """取走待执行的平台请求；没有则返回 ``None``。
+
+        平台请求是**一次性事件**，不是状态。视图的 ``use_effect`` 在组件每次挂载
+        后都会无条件跑一遍（flet 的原话：``The effect always runs after the
+        component mounts``），而切页签回来就是一次重新挂载。只看 ``request`` 非空
+        就会把历史请求再执行一遍 —— 表现正是「选过一次目录，切走再切回来，系统
+        目录框自己又弹出来」。所以执行权收口在这里：谁先 claim 谁执行，且只执行一次。
+        """
+        request, self._unclaimed = self._unclaimed, None
         return request
 
     # ------------------------------------------------------------------ 平台回执

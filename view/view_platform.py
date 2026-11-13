@@ -111,14 +111,18 @@ class FletPlatform:
 def use_platform_requests(platform: FletPlatform, vm: ViewModel) -> None:
     """把视图模型发出的平台请求交给 :class:`FletPlatform` 执行。
 
-    请求对象本身参与依赖比较，因此只有"新的一条请求"才会触发执行，
-    重复渲染不会把同一次操作做两遍。
+    ``vm.request`` 只作依赖比较（"换了一条新的"就重跑 effect）；要执行的那条经
+    :meth:`~viewmodel.base.ViewModel.claim_request` 一次性取走。这一层不能省：
+    flet 的 effect **在组件每次挂载后都会无条件跑一遍**，而切页签回来就是重新挂载，
+    只判断 ``request is not None`` 会把上一次的请求再执行一遍 —— 现象就是选过一次
+    目录、切走再切回来，系统目录框自己又弹出来。
     """
     request = vm.request
 
     def setup() -> None:
-        if request is not None:
-            platform.page.run_task(platform.perform, request, vm)
+        claimed = vm.claim_request()
+        if claimed is not None:
+            platform.page.run_task(platform.perform, claimed, vm)
 
     ui.use_effect(setup, [request])
 
@@ -126,15 +130,15 @@ def use_platform_requests(platform: FletPlatform, vm: ViewModel) -> None:
 def use_notices(page: Page, vm: ViewModel) -> None:
     """播报视图模型的一次性提示。
 
-    ``notice`` 自带单调序号，视图记住最近播报过的那条，因此重渲染不会重复弹窗。
+    播没播过由 :meth:`~viewmodel.base.ViewModel.claim_notice` 判定（视图模型的
+    生命期跟业务状态走，不随组件卸载归零），因此重新挂载不会重播旧提示。
     """
     notice = vm.notice
-    announced = ui.use_ref(0)
 
     def setup() -> None:
-        if notice is not None and notice.seq != announced.current:
-            announced.current = notice.seq
-            widgets.toast(page, notice.message, tone=notice.tone)
+        claimed = vm.claim_notice()
+        if claimed is not None:
+            widgets.toast(page, claimed.message, tone=claimed.tone)
 
     ui.use_effect(setup, [notice])
 
