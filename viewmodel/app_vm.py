@@ -19,11 +19,13 @@ from service.build_service import BuildService
 from service.commit_service import CommitService
 from service.project_service import ProjectService
 from service.report_service import ReportService
+from service.settings_service import SettingsService
 from viewmodel.base import Shortcut, ViewModel
 from viewmodel.build_vm import BuildViewModel
 from viewmodel.commit_vm import CommitViewModel
 from viewmodel.projects_vm import ProjectsViewModel
 from viewmodel.reports_vm import ReportsViewModel
+from viewmodel.settings_vm import SettingsViewModel
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,13 @@ __all__ = ["AppState", "AppViewModel", "Tab"]
 
 
 class Tab(StrEnum):
-    """左侧导航的四个页面。"""
+    """左侧导航的五个页面。"""
 
     PROJECTS = "projects"
     COMMIT = "commit"
     REPORTS = "reports"
     BUILD = "build"
+    SETTINGS = "settings"
 
     @property
     def label(self) -> str:
@@ -47,6 +50,8 @@ class Tab(StrEnum):
                 return "统计"
             case Tab.BUILD:
                 return "打包"
+            case Tab.SETTINGS:
+                return "设置"
             case _:
                 return "项目"
 
@@ -82,6 +87,7 @@ class AppViewModel(ViewModel[AppState]):
         commits: CommitService,
         reports: ReportService,
         build: BuildService,
+        settings: SettingsService,
     ) -> None:
         super().__init__(AppState())
         self._service = projects
@@ -89,6 +95,8 @@ class AppViewModel(ViewModel[AppState]):
         self.commit_vm = CommitViewModel(commits, on_changed=self.refresh)
         self.reports_vm = ReportsViewModel(reports)
         self.build_vm = BuildViewModel(build)
+        # 设置改完，打包页的计划与命令预览都得按新参数重算一遍
+        self.settings_vm = SettingsViewModel(settings, build, on_saved=self.build_vm.refresh_plan)
         self._refresh_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------ 启动
@@ -139,6 +147,7 @@ class AppViewModel(ViewModel[AppState]):
         self.commit_vm.sync(projects=state.projects)
         self.reports_vm.sync(projects=state.projects)
         self.build_vm.sync(projects=state.projects, busy=state.loading)
+        self.settings_vm.sync(projects=state.projects)
 
     # ------------------------------------------------------------------ 导航
     def select_tab(self, tab: Tab) -> None:
@@ -164,6 +173,8 @@ class AppViewModel(ViewModel[AppState]):
                     self.select_tab(Tab.REPORTS)
                 case "4" | "NUMPAD4":
                     self.select_tab(Tab.BUILD)
+                case "5" | "NUMPAD5":
+                    self.select_tab(Tab.SETTINGS)
                 case "N":
                     self.open_new_project()
                 case "R":

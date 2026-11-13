@@ -153,9 +153,7 @@ def project_form_dialog(
                                 prefix_icon=Icons.FOLDER_OUTLINED,
                                 hint_text=r"D:\Projects\my-repo",
                                 # 输入途中只清理明显的粘贴痕迹（见视图模型 change_path）
-                                on_change=lambda e: on_path_change(
-                                    widgets.event_value(e) or ""
-                                ),
+                                on_change=lambda e: on_path_change(widgets.event_value(e) or ""),
                                 # 失焦事件不携带文本，整理以草稿里的当前值为准
                                 on_blur=lambda _: on_path_commit(),
                                 on_submit=submit_path,
@@ -192,9 +190,7 @@ def project_form_dialog(
                         editable=False,
                         # None = 吃掉标签右边的全部宽度，不写死 480
                         width=None,
-                        on_change=lambda e: on_permission(
-                            Permission.parse(widgets.event_value(e))
-                        ),
+                        on_change=lambda e: on_permission(Permission.parse(widgets.event_value(e))),
                     ).ui(),
                     hint=widgets.hint_row(Icons.INFO_OUTLINE, _PERMISSION_HINT),
                 ),

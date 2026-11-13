@@ -3,6 +3,12 @@
 整个程序只有这里认识**具体**实现（SQLite 仓储、subprocess、git CLI、flet CLI），
 也只有这里把外部配置（环境变量、运行环境）翻译成注入用的参数包。
 换掉任何一项技术实现，只需要改这个文件；上层代码一行都不用动。
+
+打包参数是全程序唯一一份"用户能改的配置"，因此它的流向要看清：
+``环境/运行环境推导的默认值`` → :class:`~service.settings_service.SettingsService`
+（合并数据库里保存过的值）→ **取值函数** ``lambda: settings_service.current`` 注入
+打包服务与 flet CLI。注入的是函数不是值 —— 设置页保存后下一次取参数就是新的，
+不需要重启程序。
 """
 
 from __future__ import annotations
@@ -15,7 +21,12 @@ from infra.git_cli import GitCli
 from infra.localfs import LocalFileSystem
 from infra.localpaths import LocalPaths
 from infra.logs import LogSetup
-from infra.persistence import Database, SqlCommitRepository, SqlProjectRepository
+from infra.persistence import (
+    Database,
+    SqlCommitRepository,
+    SqlProjectRepository,
+    SqlSettingsRepository,
+)
 from infra.process import SubprocessRunner
 from infra.shell import ExplorerShell
 from models.settings import (
@@ -24,7 +35,7 @@ from models.settings import (
     LogSettings,
     env_flag,
 )
-from service import BuildService, CommitService, ProjectService, ReportService
+from service import BuildService, CommitService, ProjectService, ReportService, SettingsService
 from viewmodel.app_vm import AppViewModel
 
 __all__ = ["Application", "Services", "build_application"]
@@ -32,12 +43,13 @@ __all__ = ["Application", "Services", "build_application"]
 
 @dataclass(frozen=True, slots=True)
 class Services:
-    """服务层的四个入口，界面只需认识它们。"""
+    """服务层的五个入口，界面只需认识它们。"""
 
     projects: ProjectService
     commits: CommitService
     reports: ReportService
     build: BuildService
+    settings: SettingsService
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +59,6 @@ class Application:
     log: LogSetup
     database: Database
     services: Services
-    build_settings: BuildSettings
 
     def start(self, *, flet_version: str = "") -> None:
         """进程起步：装配日志并记下启动环境。
@@ -59,13 +70,13 @@ class Application:
         self.log.log_startup(flet=flet_version)
 
     def prepare(self) -> None:
-        """会话起步：在事件循环内装异常钩子，并把库表准备好。
+        """会话起步：在事件循环内装异常钩子，建表并把保存的设置读进来。
 
-        钩子要在事件循环里装才接管得到 asyncio 任务的未捕获异常；
-        建库只做一次（``initialize`` 幂等），多个窗口重复调用没有代价。
+        顺序不能反：设置存在数据库里，``initialize`` 之前读不到表。
         """
         self.log.install_hooks()
         self.database.initialize()
+        self.services.settings.reload()
 
     def create_view_model(self) -> AppViewModel:
         """每个窗口一份视图模型（状态不能跨会话共享）。"""
@@ -74,6 +85,7 @@ class Application:
             commits=self.services.commits,
             reports=self.services.reports,
             build=self.services.build,
+            settings=self.services.settings,
         )
 
 
@@ -85,17 +97,25 @@ def build_application() -> Application:
 
     # ---------------------------------------------------------------- 配置
     git_settings = GitSettings()
-    build_settings = _build_settings()
+    build_defaults = _build_settings()
 
     # ---------------------------------------------------------------- 基础设施
     database = Database(locations.database_file())
     project_store = SqlProjectRepository(database)
     commit_store = SqlCommitRepository(database)
+    settings_store = SqlSettingsRepository(database)
     git = GitCli(runner, git_settings)
-    packager = FletCli(runner, build_settings)
     filesystem = LocalFileSystem()
 
     # ---------------------------------------------------------------- 服务
+    settings = SettingsService(store=settings_store, defaults=build_defaults)
+
+    def current() -> BuildSettings:
+        """「此刻生效的打包参数」。注入函数而不是参数包，设置页保存后立刻生效。"""
+        return settings.current
+
+    packager = FletCli(runner, current)
+
     services = Services(
         projects=ProjectService(
             projects=project_store,
@@ -116,20 +136,23 @@ def build_application() -> Application:
             packager=packager,
             filesystem=filesystem,
             shell=shell,
-            settings=build_settings,
+            settings=current,
         ),
+        settings=settings,
     )
 
     return Application(
         log=LogSetup(LogSettings()),
         database=database,
         services=services,
-        build_settings=build_settings,
     )
 
 
 def _build_settings() -> BuildSettings:
-    """把环境变量与运行环境翻译成打包参数。"""
+    """把环境变量与运行环境翻译成打包参数的默认值。
+
+    这些只是**默认值**：用户在「设置」页保存过的值会覆盖它们。
+    """
     defaults = BuildSettings()
     output_root = locations.build_output_root(defaults.output_root)
     return replace(
@@ -141,6 +164,3 @@ def _build_settings() -> BuildSettings:
         python_version=env_flag("CSPM_BUILD_PYTHON_VERSION", defaults.python_version),
         executable=env_flag(defaults.executable_env, ""),
     )
-
-
-__all__ = ["Application", "Services", "build_application"]

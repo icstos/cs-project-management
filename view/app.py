@@ -51,6 +51,7 @@ from view.commit import CommitView
 from view.guard import guarded
 from view.projects import ProjectsView
 from view.reports import ReportsView
+from view.settings import SettingsView
 from view.view_platform import FletPlatform, use_notices, use_shortcuts
 from viewmodel.app_vm import AppState, AppViewModel, Tab
 from viewmodel.formatting import format_relative
@@ -61,9 +62,10 @@ _NAV_ITEMS: tuple[tuple[Tab, str, str, str], ...] = (
     (Tab.COMMIT, Icons.COMMIT_OUTLINED, Icons.COMMIT, "提交"),
     (Tab.REPORTS, Icons.ANALYTICS_OUTLINED, Icons.ANALYTICS, "统计"),
     (Tab.BUILD, Icons.ROCKET_LAUNCH_OUTLINED, Icons.ROCKET_LAUNCH, "打包"),
+    (Tab.SETTINGS, Icons.SETTINGS_OUTLINED, Icons.SETTINGS, "设置"),
 )
 
-_SHORTCUT_HINT = "Ctrl+1/2/3/4 切换 · Ctrl+N 新建 · F5 刷新"
+_SHORTCUT_HINT = "Ctrl+1~5 切换 · Ctrl+N 新建 · F5 刷新"
 
 
 @guarded
@@ -86,6 +88,8 @@ def AppShell(*, vm: AppViewModel, platform: FletPlatform) -> ui.Control:
             current = ReportsView(vm=vm.reports_vm, platform=platform)
         case Tab.BUILD:
             current = BuildView(vm=vm.build_vm, platform=platform)
+        case Tab.SETTINGS:
+            current = SettingsView(vm=vm.settings_vm, platform=platform)
         case _:
             current = ProjectsView(
                 vm=vm.projects_vm,

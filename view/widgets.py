@@ -34,6 +34,7 @@ from ui import (
     ControlState,
     CrossAxisAlignment,
     Divider,
+    FontWeight,
     Icon,
     IconButton,
     Icons,
@@ -59,6 +60,7 @@ from viewmodel.formatting import format_count
 __all__ = [
     "busy_block",
     "choice_chip",
+    "command_steps",
     "confirm_dialog",
     "danger",
     "diff_text",
@@ -301,6 +303,53 @@ def flat_panel(content, *, padding: int = SPACE["3"]) -> Container:
         border_radius=T.RADIUS_MD,
         bgcolor=T.PANEL_COLOR,
         border=T.hairline(),
+    )
+
+
+def command_steps(steps: tuple[str, ...]) -> Container:
+    """编号 + 等宽文本的命令列表。
+
+    打包页的「将要执行的步骤」与设置页的命令预览共用它：两边看到的东西
+    与真正执行的命令同源（都由打包端口生成），只是所在页面不同。
+    """
+    return flat_panel(
+        Column(
+            spacing=SPACE["2"],
+            tight=True,
+            controls=[
+                Row(
+                    spacing=SPACE["2"],
+                    vertical_alignment=CrossAxisAlignment.START,
+                    controls=[
+                        Container(
+                            width=20,
+                            height=20,
+                            border_radius=T.RADIUS_XS,
+                            bgcolor=T.card_color(),
+                            border=T.hairline(),
+                            alignment=Alignment.CENTER,
+                            content=T.text(
+                                str(index),
+                                level=T.TextLevel.CAPTION,
+                                weight=FontWeight.W_700,
+                                color=T.MUTED_TEXT,
+                            ),
+                        ),
+                        Text(
+                            command,
+                            size=11,
+                            expand=True,
+                            selectable=True,
+                            font_family=T.MONO_FONTS[0],
+                            font_family_fallback=T.MONO_FONTS,
+                            style=ui.TextStyle(height=1.5),
+                        ),
+                    ],
+                )
+                for index, command in enumerate(steps, start=1)
+            ],
+        ),
+        padding=SPACE["3"],
     )
 
 

@@ -55,4 +55,19 @@ class CommitEntity(SQLModel, table=True):
     files_changed: int = Field(default=0)
 
 
-__all__ = ["CommitEntity", "ProjectEntity"]
+class SettingEntity(SQLModel, table=True):
+    """一条应用设置（键值对）。
+
+    键是稳定的字符串标识（与 :mod:`models.build_options` 里的 ``key`` 一致），
+    值是**文本**：布尔存 ``"1"/"0"``。把所有参数拆成键值对而不是给每个参数
+    建一列 —— 新增一个参数就不必再来一次迁移。
+    """
+
+    __tablename__ = "setting"
+
+    key: str = Field(primary_key=True)
+    value: str = Field(default="")
+    updated_at: NaiveDatetime = Field(default_factory=datetime.now)
+
+
+__all__ = ["CommitEntity", "ProjectEntity", "SettingEntity"]

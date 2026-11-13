@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 APP_NAME = "CS 项目管理"
@@ -51,18 +52,62 @@ class GitSettings:
     history_limit: int = 5000
 
 
+#: 目标平台的可选值（与 ``flet build`` 的位置参数一致）。
+BUILD_TARGETS: tuple[tuple[str, str], ...] = (
+    ("windows", "Windows 桌面"),
+    ("macos", "macOS 桌面"),
+    ("linux", "Linux 桌面"),
+    ("web", "Web"),
+    ("apk", "Android APK"),
+    ("aab", "Android AAB"),
+    ("ipa", "iOS IPA"),
+    ("ios-simulator", "iOS 模拟器"),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class BuildSettings:
-    """``flet build`` 的全部参数。界面预览与实际执行同源，看到的必然是真跑的。"""
+    """``flet build`` 的全部参数。界面预览与实际执行同源，看到的必然是真跑的。
+
+    字段分成三组：
+
+    * **可在「设置」页修改**（每一项都在 :mod:`models.build_options` 里有登记，
+      保存后落库）：发布位置、应用元信息、构建行为；
+    * **由运行环境推导**（``output_root`` / ``template_dir`` 的默认值、
+      ``executable``）：只在没有保存值时生效，见 ``infra.locations``；
+    * **纯运行期**（三个超时）：不进界面、也不落库。
+    """
 
     output_root: str = r"D:\Softwares"
     template_dir: str = ""
     target: str = "windows"
+    python_version: str = "3.12"
+
+    # ---- 应用元信息
     company: str = "cstos.com"
     copyright: str = "ShawnChen"
-    python_version: str = "3.12"
+    org: str = ""
+    description: str = ""
+    build_version: str = ""
+    build_number: str = ""
+    module_name: str = ""
+
+    # ---- 构建行为
     #: ``flet build`` 的 ``--cleanup-*-files`` 与预清理目录同名，两处必须一致
     cleanup_globs: tuple[str, ...] = ("build",)
+    cleanup_app: bool = True
+    cleanup_packages: bool = True
+    compile_app: bool = True
+    compile_packages: bool = True
+    #: 自动回答 flet 的交互提问（``--yes``）。关掉时遇到 "Proceed? [y/n]" 会直接失败
+    assume_yes: bool = True
+    skip_flutter_doctor: bool = False
+    #: ``-v`` 的重复次数：0 不输出、1 标准、2 详细
+    verbose: int = 0
+    exclude_globs: tuple[str, ...] = ()
+    include_globs: tuple[str, ...] = ()
+
+    # ---- 运行期
     #: flet CLI 位置。留空则自动探测（先找当前解释器同目录，再找 PATH）
     executable: str = ""
     executable_env: str = "CSPM_FLET_EXECUTABLE"
@@ -70,6 +115,11 @@ class BuildSettings:
     build_timeout: float = 3600.0
     clean_timeout: float = 300.0
     probe_timeout: float = 60.0
+
+
+#: 「当前生效的打包参数」的取值入口。设置可以随时改，服务层因此不缓存参数包，
+#: 而是每次问一次 —— 否则改完设置还得重启程序。
+SettingsProvider = Callable[[], BuildSettings]
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +152,7 @@ __all__ = [
     "APP_NAME",
     "APP_TAGLINE",
     "APP_VERSION",
+    "BUILD_TARGETS",
     "CHANGE_PREVIEW_LIMIT",
     "FONT_ASSET_PATH",
     "FONT_FAMILY",
@@ -116,5 +167,6 @@ __all__ = [
     "BuildSettings",
     "GitSettings",
     "LogSettings",
+    "SettingsProvider",
     "env_flag",
 ]

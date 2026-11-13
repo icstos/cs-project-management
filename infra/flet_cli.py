@@ -24,11 +24,13 @@ from infra.localfs import remove_tree
 from infra.ports import CommandRunner, LineSink, PhaseSink
 from infra.process import CommandError, utf8_env
 from models.dtos import BuildOutcome, BuildPlan, CommandResult
-from models.settings import BuildSettings
+from models.settings import BuildSettings, SettingsProvider
 
 logger = logging.getLogger(__name__)
 
 _SHORT_TAIL = 200
+#: ``-v`` 最多重复两次（``-vv`` 是 flet 的上限，再多没有额外信息）
+_MAX_VERBOSE = 2
 
 #: flet 会在 Flutter SDK 未通过校验时问 "Proceed? [y/n]" 并等待输入。窗口程序没有
 #: 可交互的控制台（stdin 接的是空设备），这类提示只会让构建直接失败 —— 与其丢一个
@@ -47,24 +49,37 @@ class BuildError(RuntimeError):
 
 
 class FletCli:
-    """``flet build`` 的调用器。无状态，可安全跨渲染复用。"""
+    """``flet build`` 的调用器。无状态，可安全跨渲染复用。
 
-    def __init__(self, runner: CommandRunner, settings: BuildSettings) -> None:
+    ``settings`` 是一个**取值函数**而不是参数包：设置页随时能改 flet 路径与
+    超时，缓存一份快照会让"改完不生效"变成最难查的那类问题。
+    """
+
+    def __init__(self, runner: CommandRunner, settings: SettingsProvider) -> None:
         self._runner = runner
-        self._settings = settings
+        self._settings_of = settings
         self._executable: str | None = None
+        #: 缓存对应的 ``settings.executable`` 值，变了就重新定位
+        self._located_for: str | None = None
+
+    @property
+    def _settings(self) -> BuildSettings:
+        return self._settings_of()
 
     # ------------------------------------------------------------------ 定位
     def executable(self) -> str:
         """拿到可用的 flet CLI 路径，找不到就抛 :class:`BuildError`。"""
-        if self._executable is None:
-            found = _locate_flet(self._settings)
+        settings = self._settings
+        if self._executable is None or self._located_for != settings.executable:
+            found = _locate_flet(settings)
             if found is None:
                 raise BuildError(
                     "未找到 flet 命令，无法打包。请确认已安装 flet CLI（pip install flet），"
-                    f"或设置环境变量 {self._settings.executable_env} 指向 flet 可执行文件。"
+                    f"或在「设置」页填好 flet 可执行文件，或设置环境变量 "
+                    f"{settings.executable_env} 指向它。"
                 )
             self._executable = found
+            self._located_for = settings.executable
             logger.debug("使用 flet CLI：%s", found)
         return self._executable
 
@@ -98,33 +113,57 @@ class FletCli:
         return (plan.executable, "clean", plan.source)
 
     def build_argv(self, plan: BuildPlan) -> tuple[str, ...]:
-        """``flet build``。``--artifact`` / ``--product`` 取台账里的项目名称。"""
-        return (
+        """``flet build``。
+
+        ``--artifact`` / ``--product`` 取台账里的项目名称；元信息类参数为空时
+        **整条不传**（交给 flet 决定），而不是传一个空串把默认值覆盖掉。
+        关闭类的开关用 ``--no-*`` 表达，见 :mod:`models.build_options` 的说明。
+        """
+        argv: list[str] = [
             plan.executable,
             "build",
             plan.target,
             plan.source,
             "--artifact",
             plan.project_name,
-            "--cleanup-app",
-            "--cleanup-app-files",
-            *plan.cleanup_globs,
-            "--cleanup-package-files",
-            *plan.cleanup_globs,
-            "--cleanup-packages",
-            "--company",
-            plan.company,
-            "--copyright",
-            plan.copyright,
             "--output",
             plan.output,
             "--product",
             plan.project_name,
-            "--python-version",
-            plan.python_version,
-            "--template",
-            plan.template,
-        )
+        ]
+        for flag, value in (
+            ("--python-version", plan.python_version),
+            ("--template", plan.template),
+            ("--company", plan.company),
+            ("--copyright", plan.copyright),
+            ("--org", plan.org),
+            ("--description", plan.description),
+            ("--build-version", plan.build_version),
+            ("--build-number", plan.build_number),
+            ("--module-name", plan.module_name),
+        ):
+            if value:
+                argv += [flag, value]
+
+        if plan.cleanup_app:
+            argv += ["--cleanup-app", "--cleanup-app-files", *plan.cleanup_globs]
+        if plan.cleanup_packages:
+            argv += ["--cleanup-packages", "--cleanup-package-files", *plan.cleanup_globs]
+        if plan.exclude_globs:
+            argv += ["--exclude", *plan.exclude_globs]
+        if plan.include_globs:
+            argv += ["--include", *plan.include_globs]
+        if not plan.compile_app:
+            argv.append("--no-compile-app")
+        if not plan.compile_packages:
+            argv.append("--no-compile-packages")
+        if plan.assume_yes:
+            argv.append("--yes")
+        if plan.skip_flutter_doctor:
+            argv.append("--skip-flutter-doctor")
+        if plan.verbose > 0:
+            argv += ["-v"] * min(plan.verbose, _MAX_VERBOSE)
+        return tuple(argv)
 
     def describe(self, plan: BuildPlan) -> tuple[str, str, str]:
         """三条将要在源目录里执行的步骤（界面预览与执行同源）。

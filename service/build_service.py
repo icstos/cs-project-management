@@ -21,7 +21,7 @@ from pathlib import Path
 from infra.concurrency import offload
 from infra.ports import FileSystemPort, LineSink, PackagerPort, PhaseSink, SystemShellPort
 from models.dtos import BuildOutcome, BuildPlan, Project, Readiness, RemoveReport, TreeStats
-from models.settings import BuildSettings
+from models.settings import BuildSettings, SettingsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +37,13 @@ class BuildService:
         packager: PackagerPort,
         filesystem: FileSystemPort,
         shell: SystemShellPort,
-        settings: BuildSettings,
+        settings: SettingsProvider,
     ) -> None:
         self._packager = packager
         self._fs = filesystem
         self._shell = shell
-        self._settings = settings
+        #: 「当前生效的参数」的取值函数。设置页改完立刻生效，不需要重启程序
+        self._settings_of = settings
 
     # ------------------------------------------------------------------ 工具探测
     async def probe_tool(self) -> tuple[bool, str]:
@@ -51,11 +52,19 @@ class BuildService:
 
     def output_root(self) -> str:
         """发布根目录，供界面上的「打开发布目录」使用。"""
-        return self._settings.output_root
+        return self._settings_of().output_root
 
     # ------------------------------------------------------------------ 计划
     def plan(self, project: Project) -> BuildPlan:
         """按项目推导打包参数。**纯计算**，渲染时可以直接调用。"""
+        return self.plan_with(self._settings_of(), project)
+
+    def plan_with(self, settings: BuildSettings, project: Project) -> BuildPlan:
+        """用给定的一份参数推导计划。
+
+        设置页需要「改了还没保存」时的命令预览，所以把参数包显式传进来 ——
+        与真正执行时走的是同一个函数，预览必然等于落地后的命令。
+        """
         source = Path(project.local_path)
         return BuildPlan(
             project_id=project.id,
@@ -63,21 +72,35 @@ class BuildService:
             # 名称为空时回退源目录名，否则 flet build 拿不到合法的产物名
             project_name=project.name.strip() or source.name,
             source=str(source),
-            output=str(Path(self._settings.output_root) / source.name),
-            template=self._settings.template_dir,
-            company=self._settings.company,
-            copyright=self._settings.copyright,
-            python_version=self._settings.python_version,
-            target=self._settings.target,
+            output=str(Path(settings.output_root) / source.name),
+            template=settings.template_dir,
+            company=settings.company,
+            copyright=settings.copyright,
+            python_version=settings.python_version,
+            target=settings.target,
             executable=self._packager.peek_executable(),
-            cleanup_globs=self._settings.cleanup_globs,
+            cleanup_globs=settings.cleanup_globs,
+            org=settings.org,
+            description=settings.description,
+            build_version=settings.build_version,
+            build_number=settings.build_number,
+            module_name=settings.module_name,
+            cleanup_app=settings.cleanup_app,
+            cleanup_packages=settings.cleanup_packages,
+            compile_app=settings.compile_app,
+            compile_packages=settings.compile_packages,
+            assume_yes=settings.assume_yes,
+            skip_flutter_doctor=settings.skip_flutter_doctor,
+            verbose=settings.verbose,
+            exclude_globs=settings.exclude_globs,
+            include_globs=settings.include_globs,
         )
 
     def precheck(self, plan: BuildPlan) -> Readiness:
         """开始前的静态检查。返回的 ``issue`` 会直接展示给用户。"""
         source = Path(plan.source)
         output = Path(plan.output)
-        template_ok = Path(plan.template).is_dir()
+        template_ok = _template_ready(plan.template)
 
         if not source.is_dir():
             return Readiness(
@@ -86,7 +109,7 @@ class BuildService:
         if not template_ok:
             return Readiness(
                 issue=f"Flutter 模板目录不存在：{plan.template}"
-                "（可用环境变量 CSPM_FLET_TEMPLATE 指向别处）",
+                "（在「设置」页改成实际目录，或用环境变量 CSPM_FLET_TEMPLATE 指定）",
                 template_ok=False,
             )
         if not plan.project_name:
@@ -128,3 +151,19 @@ class BuildService:
         on_phase: PhaseSink | None = None,
     ) -> BuildOutcome:
         return await self._packager.run(plan, on_line=on_line, on_phase=on_phase)
+
+
+def _template_ready(template: str) -> bool:
+    """模板是否可用。
+
+    ``--template`` 既可以是本地目录，也可以是 ``https://…`` / ``git@…`` 这类
+    远程地址（flet 自己 clone），所以远程地址一律算"就绪"，别拿
+    ``Path.is_dir()`` 把它们判成缺失。空值仍算缺失 —— 打包时 flet 会退回默认模板，
+    但本项目默认值就是本地模板目录，空着多半是误改。
+    """
+    text = (template or "").strip()
+    if not text:
+        return False
+    if "://" in text or text.startswith("git@"):
+        return True
+    return Path(text).is_dir()

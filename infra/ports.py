@@ -37,6 +37,7 @@ __all__ = [
     "PathPort",
     "PhaseSink",
     "ProjectRepository",
+    "SettingsPort",
     "SystemShellPort",
 ]
 
@@ -165,6 +166,23 @@ class FileSystemPort(Protocol):
     def tree_stats(self, root: str) -> TreeStats: ...
 
     def remove_tree(self, root: str) -> RemoveReport: ...
+
+
+@runtime_checkable
+class SettingsPort(Protocol):
+    """应用设置的键值存储。
+
+    值一律是文本：布尔用 ``"1"/"0"``，多行列表按行存。怎么解释属于业务层，
+    存储只负责原样存取 —— 换成本地 JSON 文件或注册表时，上层一行都不用动。
+    """
+
+    def load(self) -> dict[str, str]: ...
+
+    def save(self, values: Mapping[str, str]) -> None: ...
+
+    def clear(self) -> None:
+        """删掉所有保存过的设置，读回时落到默认值。"""
+        ...
 
 
 @runtime_checkable

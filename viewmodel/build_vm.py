@@ -165,6 +165,28 @@ class BuildViewModel(ViewModel[BuildState]):
         logger.debug("打包页切换到项目「%s」", project.name)
         self._select(project)
 
+    def refresh_plan(self) -> None:
+        """按当前生效的设置重算计划与命令预览。
+
+        设置页保存后由 App 调用：参数包变了，产物目录、传了哪些开关都会跟着变，
+        页面上的命令必须立刻跟实际执行的一致。构建进行中不动 —— 正在跑的命令
+        不能和"将要执行的步骤"打架。
+        """
+        project = self.state.selected
+        if project is None or self.state.running:
+            return
+        plan = self._service.plan(project)
+        if plan == self.state.plan:
+            return
+        logger.debug("打包参数已更新：%s → %s", plan.project_name, plan.output)
+        self.update(
+            plan=plan,
+            readiness=self._service.precheck(plan),
+            steps=self._service.preview_steps(plan),
+            conflict=None,
+            failure=None,
+        )
+
     # ------------------------------------------------------------------ 探测
     async def probe_tool(self) -> None:
         try:

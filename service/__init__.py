@@ -7,11 +7,20 @@
 * :class:`~service.commit_service.CommitService` —— 预览、提交与推送
 * :class:`~service.report_service.ReportService` —— 历史采集与统计聚合
 * :class:`~service.build_service.BuildService` —— 打包参数推导、体检与执行
+* :class:`~service.settings_service.SettingsService` —— 打包参数的读取、校验与保存
 """
 
 from service.build_service import BuildService
 from service.commit_service import CommitService
 from service.project_service import ProjectService
 from service.report_service import ReportService
+from service.settings_service import SettingsError, SettingsService
 
-__all__ = ["BuildService", "CommitService", "ProjectService", "ReportService"]
+__all__ = [
+    "BuildService",
+    "CommitService",
+    "ProjectService",
+    "ReportService",
+    "SettingsError",
+    "SettingsService",
+]

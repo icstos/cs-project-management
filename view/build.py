@@ -395,45 +395,7 @@ def _command_panel(steps: tuple[str, ...]) -> ui.Control:
                         widgets.muted("可选中复制", size=11),
                     ],
                 ),
-                widgets.flat_panel(
-                    Column(
-                        spacing=SPACE["2"],
-                        tight=True,
-                        controls=[
-                            Row(
-                                spacing=SPACE["2"],
-                                vertical_alignment=CrossAxisAlignment.START,
-                                controls=[
-                                    Container(
-                                        width=20,
-                                        height=20,
-                                        border_radius=T.RADIUS_XS,
-                                        bgcolor=T.card_color(),
-                                        border=T.hairline(),
-                                        alignment=Alignment.CENTER,
-                                        content=T.text(
-                                            str(index),
-                                            level=T.TextLevel.CAPTION,
-                                            weight=FontWeight.W_700,
-                                            color=T.MUTED_TEXT,
-                                        ),
-                                    ),
-                                    Text(
-                                        command,
-                                        size=11,
-                                        expand=True,
-                                        selectable=True,
-                                        font_family=T.MONO_FONTS[0],
-                                        font_family_fallback=T.MONO_FONTS,
-                                        style=ui.TextStyle(height=1.5),
-                                    ),
-                                ],
-                            )
-                            for index, command in enumerate(steps, start=1)
-                        ],
-                    ),
-                    padding=SPACE["3"],
-                ),
+                widgets.command_steps(steps),
             ],
         )
     )

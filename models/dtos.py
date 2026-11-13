@@ -330,6 +330,22 @@ class BuildPlan:
     target: str = "windows"
     executable: str = "flet"
     cleanup_globs: tuple[str, ...] = ("build",)
+    #: 应用元信息（空串表示不传该参数，交给 flet 用默认值）
+    org: str = ""
+    description: str = ""
+    build_version: str = ""
+    build_number: str = ""
+    module_name: str = ""
+    #: 构建行为
+    cleanup_app: bool = True
+    cleanup_packages: bool = True
+    compile_app: bool = True
+    compile_packages: bool = True
+    assume_yes: bool = True
+    skip_flutter_doctor: bool = False
+    verbose: int = 0
+    exclude_globs: tuple[str, ...] = ()
+    include_globs: tuple[str, ...] = ()
 
     @property
     def output_name(self) -> str:
