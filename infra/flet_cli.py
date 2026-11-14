@@ -165,19 +165,26 @@ class FletCli:
             argv += ["-v"] * min(plan.verbose, _MAX_VERBOSE)
         return tuple(argv)
 
-    def describe(self, plan: BuildPlan) -> tuple[str, str, str]:
-        """三条将要在源目录里执行的步骤（界面预览与执行同源）。
+    def describe(self, plan: BuildPlan) -> tuple[str, ...]:
+        """将要在源目录里执行的步骤（界面预览与执行同源）。
 
         第 0 步不是命令，却是"残留为什么能被清掉"的关键：``flet build`` 会把整个
         项目（含 ``.git``）复制进 ``build/``，那些只读 object 靠 ``flet clean`` 的
         裸 rmtree 删不掉（WinError 5），所以先由程序自己删一遍。
+
+        ``plan.clean_build`` 关掉时前两步一起消失 —— 只跳过内置删除而保留
+        ``flet clean`` 是自相矛盾的（它删的也是同一个 ``build/``，还会因为只读文件
+        直接失败），等于"关了个寂寞"。所以这里如实少列两条命令。
         """
         # 不带序号：序号由界面统一给（列表左侧的角标从 1 开始）。两边都编号
         # 会出现"3 2)"这种自相矛盾的行，读的人第一眼就会愣一下。
+        build_step = format_command(self.build_argv(plan))
+        if not plan.clean_build:
+            return (build_step,)
         return (
             f"删除 {plan.build_dir}（内置步骤，只读文件也删得掉）",
             format_command(self.clean_argv(plan)),
-            format_command(self.build_argv(plan)),
+            build_step,
         )
 
     # ------------------------------------------------------------------ 执行
@@ -188,8 +195,9 @@ class FletCli:
         on_line: LineSink | None = None,
         on_phase: PhaseSink | None = None,
     ) -> BuildOutcome:
-        """跑完整轮打包：清理 build 目录 → ``flet clean`` → ``flet build``。
+        """跑完整轮打包：清理 ``build`` 目录 → ``flet clean`` → ``flet build``。
 
+        ``plan.clean_build`` 为假时前两步整体跳过，直接 ``flet build``（增量构建）。
         任一步失败立刻返回，不再往下走 —— 带着旧残留继续构建只会产出更迷惑的结果。
         """
         started = time.perf_counter()
@@ -200,39 +208,51 @@ class FletCli:
             return BuildOutcome(ok=False, detail=str(exc), output=plan.output)
 
         plan = plan if plan.executable == executable else replace(plan, executable=executable)
-        logger.info("开始打包「%s」：%s → %s", plan.project_name, plan.source, plan.output)
+        logger.info(
+            "开始打包「%s」：%s → %s（%s）",
+            plan.project_name,
+            plan.source,
+            plan.output,
+            "先清理 build" if plan.clean_build else "跳过清理，增量构建",
+        )
 
-        # 1) 预清理：先把源目录里的 build 目录删掉。
-        #    flet clean 用的是裸 shutil.rmtree，遇到只读文件就报 WinError 5 并直接退出 1
-        #    —— 而 flet 会把整个项目复制进 build/ 里，项目自带的 .git/objects 全是只读的，
-        #    所以"项目本身是 git 仓库"这一常见情况会让 flet clean 必然失败。
-        #    remove_tree 会先去掉只读位再删，这里先跑一遍；随后的 flet clean
-        #    面对的只是一个不存在的目录（输出 "Nothing to clean" 并返回 0）。
-        _notify_phase(on_phase, "清理上一次构建的 build 目录")
-        residue = await offload(remove_tree, plan.build_dir)
-        if not residue.ok:
-            blocker = residue.first_blocker
-            reason = blocker.reason if blocker else "未知原因"
-            where = blocker.path if blocker else str(plan.build_dir)
-            logger.error("打包终止：build 目录删不干净（%s）\n%s", reason, where)
-            return _failed(
-                f"上一次构建的 build 目录删不掉（{reason}）：{where}。"
-                "请先关掉占用它的程序（编辑器 / 资源管理器 / 终端）再重试",
-                plan,
-                started,
-            )
+        if plan.clean_build:
+            # 1) 预清理：先把源目录里的 build 目录删掉。
+            #    flet clean 用的是裸 shutil.rmtree，遇到只读文件就报 WinError 5 并直接退出 1
+            #    —— 而 flet 会把整个项目复制进 build/ 里，项目自带的 .git/objects 全是只读的，
+            #    所以"项目本身是 git 仓库"这一常见情况会让 flet clean 必然失败。
+            #    remove_tree 会先去掉只读位再删，这里先跑一遍；随后的 flet clean
+            #    面对的只是一个不存在的目录（输出 "Nothing to clean" 并返回 0）。
+            _notify_phase(on_phase, "清理上一次构建的 build 目录")
+            residue = await offload(remove_tree, plan.build_dir)
+            if not residue.ok:
+                blocker = residue.first_blocker
+                reason = blocker.reason if blocker else "未知原因"
+                where = blocker.path if blocker else str(plan.build_dir)
+                logger.error("打包终止：build 目录删不干净（%s）\n%s", reason, where)
+                return _failed(
+                    f"上一次构建的 build 目录删不掉（{reason}）：{where}。"
+                    "请先关掉占用它的程序（编辑器 / 资源管理器 / 终端）再重试",
+                    plan,
+                    started,
+                )
 
-        # 2) flet clean：清掉上一次构建留下的 build 目录
-        _notify_phase(on_phase, "flet clean：清理上一次构建的残留")
-        try:
-            clean = await self._step(
-                plan, self.clean_argv(plan), self._settings.clean_timeout, on_line
-            )
-        except BuildError as exc:
-            return _failed(f"flet clean 执行失败：{exc}", plan, started)
-        if not clean.ok:
-            logger.error("打包终止：flet clean 失败\n%s", clean.message)
-            return _failed(f"flet clean 失败：{_short(clean.message)}", plan, started)
+            # 2) flet clean：清掉上一次构建留下的 build 目录
+            _notify_phase(on_phase, "flet clean：清理上一次构建的残留")
+            try:
+                clean = await self._step(
+                    plan, self.clean_argv(plan), self._settings.clean_timeout, on_line
+                )
+            except BuildError as exc:
+                return _failed(f"flet clean 执行失败：{exc}", plan, started)
+            if not clean.ok:
+                logger.error("打包终止：flet clean 失败\n%s", clean.message)
+                return _failed(f"flet clean 失败：{_short(clean.message)}", plan, started)
+        else:
+            # 用户关掉了「清理 build 目录」：直接基于上一次的 build 目录增量构建。
+            # 旧文件残留是这一步的已知代价，界面上的开关旁已经写明。
+            logger.info("按用户选择跳过清理，沿用现有 build 目录：%s", plan.build_dir)
+            _notify_phase(on_phase, "跳过清理：沿用上一次的 build 目录")
 
         # 3) flet build
         _notify_phase(on_phase, "flet build：正在构建（首次会下载 Flutter 依赖，可能较久）")

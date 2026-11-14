@@ -10,7 +10,8 @@
    模板目录没了、输出目录套在源目录里）拦在真正开跑之前，别让用户白等十分钟；
 3. **腾空产物目录** :meth:`BuildService.inspect` / :meth:`BuildService.purge` ——
    已有文件时由界面确认后才删，删不干净（文件被占用）时返回具体的阻塞路径；
-4. **执行** :meth:`BuildService.run` —— 交给打包端口跑完整轮，输出按行实时回流。
+4. **执行** :meth:`BuildService.run` —— 交给打包端口跑完整轮（默认先清源目录的
+   ``build``；打包页的开关关掉时跳过清理，直接增量构建），输出按行实时回流。
 """
 
 from __future__ import annotations
@@ -55,11 +56,17 @@ class BuildService:
         return self._settings_of().output_root
 
     # ------------------------------------------------------------------ 计划
-    def plan(self, project: Project) -> BuildPlan:
-        """按项目推导打包参数。**纯计算**，渲染时可以直接调用。"""
-        return self.plan_with(self._settings_of(), project)
+    def plan(self, project: Project, *, clean_build: bool = True) -> BuildPlan:
+        """按项目推导打包参数。**纯计算**，渲染时可以直接调用。
 
-    def plan_with(self, settings: BuildSettings, project: Project) -> BuildPlan:
+        ``clean_build`` 由打包页的开关传入（不属于设置页的持久化参数）：
+        它只决定"这轮构建要不要先删 ``build`` 目录"，默认从零构建。
+        """
+        return self.plan_with(self._settings_of(), project, clean_build=clean_build)
+
+    def plan_with(
+        self, settings: BuildSettings, project: Project, *, clean_build: bool = True
+    ) -> BuildPlan:
         """用给定的一份参数推导计划。
 
         设置页需要「改了还没保存」时的命令预览，所以把参数包显式传进来 ——
@@ -94,6 +101,7 @@ class BuildService:
             verbose=settings.verbose,
             exclude_globs=settings.exclude_globs,
             include_globs=settings.include_globs,
+            clean_build=clean_build,
         )
 
     def precheck(self, plan: BuildPlan) -> Readiness:

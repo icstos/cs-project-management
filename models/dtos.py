@@ -346,6 +346,10 @@ class BuildPlan:
     verbose: int = 0
     exclude_globs: tuple[str, ...] = ()
     include_globs: tuple[str, ...] = ()
+    #: 打包前是否清理源目录下的 ``build``（内置删除 + ``flet clean``）。
+    #: 由**打包页**的开关控制，不属于设置页那套持久化参数：它是一次构建的选择，
+    #: 关掉就变成"基于上一次 build 目录的增量构建"，默认开（从零构建更可预期）。
+    clean_build: bool = True
 
     @property
     def output_name(self) -> str:

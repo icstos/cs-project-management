@@ -4,7 +4,8 @@
 
 1. 点开始 → 先统计产物目录，若已有文件就把冲突放进状态，由视图弹确认框；
 2. 删除失败（文件被占用）单独记录一份阻塞详情，给出具体路径与处理建议；
-3. 确认后交给打包服务跑完清理 → ``flet clean`` → ``flet build``；
+3. 确认后交给打包服务跑完清理 → ``flet clean`` → ``flet build``
+   （页面上的「清理 build 目录」开关关掉时，前两步跳过，直接增量构建）；
 4. 命令输出按固定间隔合并刷新成 ``console`` 状态。
 
 控制台按固定间隔合并刷新：构建输出动辄上千行，每来一行就重渲染一次会把界面拖垮；
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from models.dtos import BuildOutcome, BuildPlan, Project, Readiness, TreeStats
 from models.enums import Tone
@@ -86,6 +87,8 @@ class BuildState:
     outcome: BuildOutcome | None = None
     conflict: OutputConflict | None = None
     failure: RemovalFailure | None = None
+    #: 本轮是否先清理源目录的 ``build``（打包页开关，默认开；不进设置页的持久化参数）
+    clean_build: bool = True
     #: 将要执行的步骤文本，与实际执行同源（由打包端口生成）
     steps: tuple[str, ...] = ()
 
@@ -143,7 +146,7 @@ class BuildViewModel(ViewModel[BuildState]):
 
     # ------------------------------------------------------------------ 选择
     def _select(self, project: Project) -> None:
-        plan = self._service.plan(project)
+        plan = self._service.plan(project, clean_build=self.state.clean_build)
         self.update(
             selected_id=project.id,
             plan=plan,
@@ -175,7 +178,7 @@ class BuildViewModel(ViewModel[BuildState]):
         project = self.state.selected
         if project is None or self.state.running:
             return
-        plan = self._service.plan(project)
+        plan = self._service.plan(project, clean_build=self.state.clean_build)
         if plan == self.state.plan:
             return
         logger.debug("打包参数已更新：%s → %s", plan.project_name, plan.output)
@@ -185,6 +188,28 @@ class BuildViewModel(ViewModel[BuildState]):
             steps=self._service.preview_steps(plan),
             conflict=None,
             failure=None,
+        )
+
+    # ------------------------------------------------------------------ 构建选项
+    def set_clean_build(self, enabled: bool) -> None:
+        """打包页的「清理 build 目录」开关：只影响本轮的步骤与执行。
+
+        关掉后不只是少删一次：``flet clean`` 也一并跳过（它删的正是同一个
+        ``build/``，留着它只会因为只读文件直接失败），于是变成增量构建。
+        计划里带着这个标记，所以「将要执行的步骤」会同步少掉两条命令。
+        """
+        if self.state.running or enabled == self.state.clean_build:
+            return
+        logger.debug("打包前清理 build 目录：%s", "开" if enabled else "关")
+        plan = self.state.plan
+        if plan is None:
+            self.update(clean_build=enabled)
+            return
+        plan = replace(plan, clean_build=enabled)
+        self.update(
+            clean_build=enabled,
+            plan=plan,
+            steps=self._service.preview_steps(plan),
         )
 
     # ------------------------------------------------------------------ 探测

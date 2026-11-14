@@ -28,6 +28,7 @@ from ui import (
     ListView,
     Padding,
     Row,
+    Switch,
     Text,
     TextOverflow,
 )
@@ -90,7 +91,9 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ui.Control:
     return widgets.page_shell(
         header=widgets.page_header(
             "打包发布",
-            "先在项目目录执行 flet clean，再构建到发布目录；命令与输出全程记录",
+            "先清理 build 目录再构建到发布目录；命令与输出全程记录"
+            if state.clean_build
+            else "跳过清理，直接基于上一次的 build 目录增量构建；命令与输出全程记录",
             actions=[
                 *(
                     [
@@ -130,8 +133,8 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ui.Control:
                         expand=True,
                         spacing=T.GRID_GUTTER,
                         controls=[
-                            _target_panel(state),
-                            _command_panel(state.steps),
+                            _target_panel(state, vm),
+                            _command_panel(state),
                             *([_outcome_row(state, vm, page)] if state.outcome else []),
                             _console_panel(state),
                         ],
@@ -228,7 +231,7 @@ def _project_tile(
 
 
 # --------------------------------------------------------------------------- 右栏
-def _target_panel(state: BuildState) -> ui.Control:
+def _target_panel(state: BuildState, vm: BuildViewModel) -> ui.Control:
     plan = state.plan
     if plan is None:
         return widgets.surface(
@@ -304,6 +307,7 @@ def _target_panel(state: BuildState) -> ui.Control:
                         ),
                     ],
                 ),
+                _clean_row(state, vm),
                 Row(
                     spacing=SPACE["2"],
                     wrap=True,
@@ -373,8 +377,49 @@ def _path_row(icon: str, label: str, value: str, *, tone: Tone = Tone.NEUTRAL) -
     )
 
 
-def _command_panel(steps: tuple[str, ...]) -> ui.Control:
-    if not steps:
+def _clean_row(state: BuildState, vm: BuildViewModel) -> ui.Control:
+    """「清理 build 目录」开关：一行把开与不开的后果都写清楚。
+
+    关掉不只是少删一次：``flet clean`` 也一并跳过（它删的正是同一个 ``build/``，
+    留着它只会因为只读文件直接失败），于是变成增量构建。代价必须在开关旁边说完，
+    别等构建出了怪结果再回头解释。
+    """
+    enabled = state.clean_build
+    return Row(
+        spacing=SPACE["2"],
+        vertical_alignment=CrossAxisAlignment.CENTER,
+        controls=[
+            Icon(Icons.CLEANING_SERVICES_OUTLINED, size=T.ICON_SM, color=T.MUTED_TEXT),
+            Column(
+                expand=True,
+                spacing=1,
+                tight=True,
+                controls=[
+                    T.text(
+                        "打包前清理 build 目录",
+                        level=T.TextLevel.BODY,
+                        weight=FontWeight.W_500,
+                    ),
+                    T.text(
+                        "删除源目录下的 build/，从零开始构建"
+                        if enabled
+                        else "跳过清理：沿用上一次的 build/，构建更快，旧文件可能残留",
+                        level=T.TextLevel.CAPTION,
+                        color=T.MUTED_TEXT,
+                    ),
+                ],
+            ),
+            Switch(
+                value=enabled,
+                on_toggle=vm.set_clean_build,
+                disabled=state.running,
+            ).ui(),
+        ],
+    )
+
+
+def _command_panel(state: BuildState) -> ui.Control:
+    if not state.steps:
         return widgets.surface(content=widgets.muted("选择项目后显示将要执行的命令", size=12))
 
     return widgets.surface(
@@ -395,7 +440,19 @@ def _command_panel(steps: tuple[str, ...]) -> ui.Control:
                         widgets.muted("可选中复制", size=11),
                     ],
                 ),
-                widgets.command_steps(steps),
+                *(
+                    []
+                    if state.clean_build
+                    else [
+                        widgets.hint_row(
+                            Icons.INFO_OUTLINE,
+                            "已关闭清理：本次只执行 flet build，沿用上一次的 build/ 目录，"
+                            "旧文件与缓存可能留在里面",
+                            tone=Tone.WARNING,
+                        )
+                    ]
+                ),
+                widgets.command_steps(state.steps),
             ],
         )
     )
