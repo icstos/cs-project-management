@@ -15,6 +15,7 @@ from datetime import date
 from typing import Protocol, runtime_checkable
 
 from models.dtos import (
+    ArchiveReport,
     BuildOutcome,
     BuildPlan,
     CommandResult,
@@ -161,11 +162,15 @@ class CommitRepository(Protocol):
 
 @runtime_checkable
 class FileSystemPort(Protocol):
-    """目录占用统计与"能删得掉"的递归删除。"""
+    """目录占用统计、递归删除与"整目录搬进历史版本"。"""
 
     def tree_stats(self, root: str) -> TreeStats: ...
 
     def remove_tree(self, root: str) -> RemoveReport: ...
+
+    def archive_tree(self, source: str, target: str) -> ArchiveReport:
+        """把 ``source`` 整个移到 ``target``；同卷时是一次改名，失败不动原目录。"""
+        ...
 
 
 @runtime_checkable

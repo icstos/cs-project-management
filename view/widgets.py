@@ -739,8 +739,8 @@ def confirm_dialog(
 ) -> ui.AlertDialog:
     """确认框：标题条 + 说明 + 可选补充面板 + "取消 / 确认"。
 
-    按钮手工给（而不是让 AlertDialog 自动铺）：本产品的确认文案是"删除并打包"、
-    "重试删除"这类**具体动作**，不是通用的"确定"。
+    按钮手工给（而不是让 AlertDialog 自动铺）：本产品的确认文案是"删除项目"、
+    "重试"这类**具体动作**，不是通用的"确定"。
     """
     return ui.AlertDialog(
         modal=True,

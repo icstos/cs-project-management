@@ -25,6 +25,14 @@ WINDOW_HEIGHT = 840
 WINDOW_MIN_WIDTH = 1000
 WINDOW_MIN_HEIGHT = 660
 
+# --------------------------------------------------------------------------- 打包存档
+#: 旧版本存到产物目录的**同级**文件夹里，例如 ``D:\Softwares\历史版本``。
+#: 与产物目录同父级意味着同一个卷：移动只是改个名，瞬间完成、不额外占空间。
+HISTORY_DIR_NAME = "历史版本"
+#: 存档名 = 原目录名 + 后缀，例如 ``cs-markdown-editor-before-2026-09-05_10-30-22``
+ARCHIVE_SUFFIX_PREFIX = "-before-"
+ARCHIVE_STAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
 # --------------------------------------------------------------------------- 统计
 TREND_DAYS_DEFAULT = 30
 TREND_DAYS_MAX = 30
@@ -144,8 +152,11 @@ __all__ = [
     "APP_NAME",
     "APP_TAGLINE",
     "APP_VERSION",
+    "ARCHIVE_STAMP_FORMAT",
+    "ARCHIVE_SUFFIX_PREFIX",
     "BUILD_TARGETS",
     "CHANGE_PREVIEW_LIMIT",
+    "HISTORY_DIR_NAME",
     "REPORT_ROW_LIMIT",
     "TREND_DAYS_DEFAULT",
     "TREND_DAYS_MAX",

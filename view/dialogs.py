@@ -30,13 +30,12 @@ from models.dtos import Project
 from models.enums import Permission, Tone
 from view import design as T
 from view import widgets
-from viewmodel.build_vm import OutputConflict, RemovalFailure
+from viewmodel.build_vm import ArchiveFailure
 from viewmodel.projects_vm import ProjectDraft
 
 __all__ = [
+    "archive_failed_dialog",
     "delete_project_dialog",
-    "output_conflict_dialog",
-    "output_locked_dialog",
     "project_form_dialog",
 ]
 
@@ -235,60 +234,19 @@ def delete_project_dialog(
 
 
 # --------------------------------------------------------------------------- 打包
-def output_conflict_dialog(
+def archive_failed_dialog(
     *,
-    conflict: OutputConflict,
-    on_confirm,
-    on_cancel,
-) -> ui.AlertDialog:
-    """产物目录非空时的确认框（对应"提示是否删除"）。"""
-    return widgets.confirm_dialog(
-        title_text="产物目录已存在",
-        message=(
-            f"该目录下已有 {conflict.files} 个文件（约 {conflict.size}）。"
-            "继续打包会把新旧文件混在一起，建议先删除再构建。"
-        ),
-        confirm_label="删除并打包",
-        on_confirm=on_confirm,
-        on_cancel=on_cancel,
-        extra=widgets.flat_panel(
-            Column(
-                spacing=SPACE["1"],
-                tight=True,
-                controls=[
-                    widgets.muted(conflict.path, size=11, max_lines=2),
-                    *(
-                        [
-                            widgets.muted(
-                                "包含："
-                                + "、".join(conflict.top)
-                                + ("…" if conflict.files > len(conflict.top) else ""),
-                                size=11,
-                                max_lines=2,
-                            )
-                        ]
-                        if conflict.top
-                        else []
-                    ),
-                ],
-            )
-        ),
-    )
-
-
-def output_locked_dialog(
-    *,
-    failure: RemovalFailure,
+    failure: ArchiveFailure,
     on_retry,
     on_close,
 ) -> ui.AlertDialog:
-    """删除产物目录失败（多半是文件被占用）。"""
+    """旧产物移不进历史版本（多半是目录里的程序还在运行）。"""
     return ui.AlertDialog(
         modal=True,
         title=_dialog_title(
             Icons.FOLDER_OFF,
-            "产物目录删除失败",
-            "文件可能正被其他程序占用",
+            "旧版本移动失败",
+            "产物目录可能正被其他程序占用",
             tone=Tone.DANGER,
         ),
         content=Column(
@@ -304,17 +262,8 @@ def output_locked_dialog(
                         controls=[
                             widgets.muted(failure.path, size=11, max_lines=2),
                             *(
-                                [widgets.muted(f"仍剩 {failure.remaining} 个文件未删除", size=11)]
-                                if failure.remaining
-                                else []
-                            ),
-                            *(
-                                [
-                                    widgets.muted(
-                                        f"被阻塞：{failure.blocked_path}", size=11, max_lines=3
-                                    )
-                                ]
-                                if failure.blocked_path
+                                [widgets.muted(f"目标：{failure.target}", size=11, max_lines=2)]
+                                if failure.target
                                 else []
                             ),
                         ],
@@ -322,14 +271,16 @@ def output_locked_dialog(
                 ),
                 widgets.hint_row(
                     Icons.LIGHTBULB_OUTLINE,
-                    "最常见的原因是这个目录里的程序还在运行；关掉它（以及停在里面的"
-                    "资源管理器窗口）后点「重试删除」即可。",
+                    "旧版本还没动过，产物目录保持原样。最常见的原因是这个目录里的程序还在"
+                    "运行（或者资源管理器正停在里面）：关掉它后点「重试」即可，也可以手动"
+                    "把目录拖进「历史版本」文件夹再打包。",
                     tone=Tone.WARNING,
                 ),
             ],
         ),
         actions=[
             widgets.text_btn("取消", on_click=on_close),
-            widgets.filled("重试删除", icon=Icons.RESTART_ALT, on_click=on_retry),
+            widgets.filled("重试", icon=Icons.RESTART_ALT, on_click=on_retry),
         ],
     )
+

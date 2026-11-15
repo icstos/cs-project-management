@@ -1,11 +1,12 @@
 """打包页：把项目文件夹里的 Flet 程序构建成 Windows 程序。
 
-执行顺序刻意做成"先体检、再确认、后施工"（细节在视图模型里），界面负责把
+执行顺序刻意做成"先体检、再腾位置、后施工"（细节在视图模型里），界面负责把
 当前阶段、将要执行的命令和实时输出如实呈现出来：
 
 * 「将要执行的步骤」与真正跑的命令同源，看到的必然是真跑的；
 * 控制台按固定间隔合并刷新，被截掉的部分在日志文件里有完整记录；
-* 产物目录非空、删除被占用等需要用户决策的时刻，各弹各的框。
+* 产物目录非空时旧版本会自动移入同级的「历史版本」文件夹（不删除），搬不动
+  才弹框让用户决定。
 
 控制台是这一页的视觉重心：它固定用深色底 + 等宽字体，和周围的浅卡片刻意拉开，
 让人一眼分清"界面"与"机器输出"。
@@ -37,7 +38,7 @@ from models.dtos import Project, TreeStats
 from models.enums import Tone
 from view import design as T
 from view import widgets
-from view.dialogs import output_conflict_dialog, output_locked_dialog
+from view.dialogs import archive_failed_dialog
 from view.guard import guarded
 from view.view_platform import FletPlatform, use_notices, use_platform_requests
 from viewmodel.build_vm import BuildState, BuildViewModel
@@ -58,19 +59,10 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ui.Control:
     ui.use_effect(lambda: page.run_task(vm.load_output), [state.plan])
 
     ui.use_dialog(
-        output_conflict_dialog(
-            conflict=state.conflict,
-            on_confirm=lambda _: vm.confirm_remove(),
-            on_cancel=lambda _: vm.cancel_conflict(),
-        )
-        if state.conflict is not None
-        else None
-    )
-    ui.use_dialog(
-        output_locked_dialog(
+        archive_failed_dialog(
             failure=state.failure,
-            on_retry=lambda _: vm.retry_remove(),
-            on_close=lambda _: vm.update(failure=None),
+            on_retry=lambda _: vm.retry_archive(),
+            on_close=lambda _: vm.dismiss_failure(),
         )
         if state.failure is not None
         else None
@@ -91,9 +83,10 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ui.Control:
     return widgets.page_shell(
         header=widgets.page_header(
             "打包发布",
-            "先清理 build 目录再构建到发布目录；命令与输出全程记录"
+            "先清理 build 目录再构建到发布目录；旧版本自动存入「历史版本」，命令与输出全程记录"
             if state.clean_build
-            else "跳过清理，直接基于上一次的 build 目录增量构建；命令与输出全程记录",
+            else "跳过清理，直接基于上一次的 build 目录增量构建；旧版本自动存入"
+            "「历史版本」，命令与输出全程记录",
             actions=[
                 *(
                     [
@@ -255,14 +248,23 @@ def _target_panel(state: BuildState, vm: BuildViewModel) -> ui.Control:
             )
         )
     if occupied:
-        # 提示要点到"会先问一句"为止：具体问什么、删多少，留给弹窗说
+        # 说清"会先搬走、不会删"，并把存档目录直接摆出来，用户不必猜去了哪
+        stats = state.output_state
+        size = f"{stats.files} 个文件（{human_bytes(stats.bytes)}）" if stats else "文件"
         notes.append(
             widgets.hint_row(
                 Icons.INFO_OUTLINE,
-                "产物目录里已有文件，点「开始打包」会先询问是否删除。",
+                f"产物目录里已有 {size}：开始打包时会先整体移入历史版本（不删除，"
+                "目录名追加 -before-时间）",
                 tone=Tone.WARNING,
             )
         )
+        notes.append(_path_row(Icons.HISTORY, "历史版本", str(plan.history_dir)))
+    if state.archived:
+        notes.append(
+            widgets.hint_row(Icons.CHECK_CIRCLE_OUTLINE, "上一次的产物已存档", tone=Tone.SUCCESS)
+        )
+        notes.append(_path_row(Icons.INVENTORY_2_OUTLINED, "已移入", state.archived))
 
     return widgets.surface(
         content=Column(

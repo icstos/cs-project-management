@@ -1,10 +1,12 @@
 """打包视图模型。
 
-执行顺序刻意做成"先体检、再确认、后施工"：
+执行顺序刻意做成"先体检、再腾位置、后施工"：
 
-1. 点开始 → 先统计产物目录，若已有文件就把冲突放进状态，由视图弹确认框；
-2. 删除失败（文件被占用）单独记录一份阻塞详情，给出具体路径与处理建议；
-3. 确认后交给打包服务跑完清理 → ``flet clean`` → ``flet build``
+1. 点开始 → 先统计产物目录；非空就把整个目录移入同级的「历史版本」文件夹
+   （名字追加 ``-before-年-月-日_时-分-秒``），搬去哪了同时写进控制台与日志。
+   移动不丢数据，所以不需要先问一句；
+2. 移不动（目录里的程序还在运行）时停在原地，弹框给出原因与重试；
+3. 交给打包服务跑完清理 → ``flet clean`` → ``flet build``
    （页面上的「清理 build 目录」开关关掉时，前两步跳过，直接增量构建）；
 4. 命令输出按固定间隔合并刷新成 ``console`` 状态。
 
@@ -18,7 +20,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 
-from models.dtos import BuildOutcome, BuildPlan, Project, Readiness, TreeStats
+from models.dtos import ArchiveReport, BuildOutcome, BuildPlan, Project, Readiness, TreeStats
 from models.enums import Tone
 from service.build_service import BuildService
 from viewmodel.base import ViewModel
@@ -27,10 +29,9 @@ from viewmodel.formatting import human_bytes
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ArchiveFailure",
     "BuildState",
     "BuildViewModel",
-    "OutputConflict",
-    "RemovalFailure",
     "ToolInfo",
 ]
 
@@ -49,23 +50,12 @@ class ToolInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class OutputConflict:
-    """产物目录里已有文件：开跑之前需要用户确认是否删除。"""
+class ArchiveFailure:
+    """旧产物移不进历史版本（多半是目录里的程序还在运行）。"""
 
     path: str
-    files: int
-    size: str
-    top: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class RemovalFailure:
-    """产物目录删不掉（多半是文件被占用）。"""
-
-    path: str
-    reason: str
-    blocked_path: str = ""
-    remaining: int = 0
+    target: str = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +75,12 @@ class BuildState:
     console_lines: int = 0
     running: bool = False
     outcome: BuildOutcome | None = None
-    conflict: OutputConflict | None = None
-    failure: RemovalFailure | None = None
+    failure: ArchiveFailure | None = None
+    #: 本次打包前是哪一个旧版本被移入了历史版本（空串表示这次没有旧产物）
+    archived: str = ""
     #: 本轮是否先清理源目录的 ``build``（打包页开关，默认开；不进设置页的持久化参数）
     clean_build: bool = True
-    #: 将要执行的步骤文本，与实际执行同源（由打包端口生成）
+    #: 将要执行的步骤文本，与实际执行同源（打包端口 + 产物非空时的存档步骤）
     steps: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------ 派生
@@ -147,20 +138,30 @@ class BuildViewModel(ViewModel[BuildState]):
     # ------------------------------------------------------------------ 选择
     def _select(self, project: Project) -> None:
         plan = self._service.plan(project, clean_build=self.state.clean_build)
+        # 换项目时产物目录还没统计，"是否要先存旧版本"未知，先按不存算
         self.update(
             selected_id=project.id,
             plan=plan,
             readiness=self._service.precheck(plan),
             steps=self._service.preview_steps(plan),
             outcome=None,
-            conflict=None,
             failure=None,
+            archived="",
             phase="",
             console="",
             console_lines=0,
             output_state=None,
         )
         self._buffer.clear()
+
+    def _steps(self, plan: BuildPlan, stats: TreeStats | None) -> tuple[str, ...]:
+        """按产物目录的现状给出步骤：非空时第一步是"移入历史版本"。
+
+        ``stats`` 为 ``None`` 表示还没统计过 —— 这时不承诺那一步，等
+        :meth:`load_output` 拿到真实读数再补上，避免"预览里说要移动、
+        实际没有旧产物"这种自相矛盾。
+        """
+        return self._service.preview_steps(plan, archive=stats is not None and not stats.empty)
 
     def select(self, project: Project) -> None:
         if self.state.running or project.id == self.state.selected_id:
@@ -185,8 +186,7 @@ class BuildViewModel(ViewModel[BuildState]):
         self.update(
             plan=plan,
             readiness=self._service.precheck(plan),
-            steps=self._service.preview_steps(plan),
-            conflict=None,
+            steps=self._steps(plan, self.state.output_state),
             failure=None,
         )
 
@@ -209,7 +209,7 @@ class BuildViewModel(ViewModel[BuildState]):
         self.update(
             clean_build=enabled,
             plan=plan,
-            steps=self._service.preview_steps(plan),
+            steps=self._steps(plan, self.state.output_state),
         )
 
     # ------------------------------------------------------------------ 探测
@@ -232,18 +232,18 @@ class BuildViewModel(ViewModel[BuildState]):
             logger.exception("统计产物目录失败：%s", plan.output)
             self.update(output_state=None)
             return
-        self.update(output_state=stats)
+        self.update(output_state=stats, steps=self._steps(plan, stats))
 
     # ------------------------------------------------------------------ 主流程
     def request_start(self) -> None:
-        """点「开始打包」：先体检产物目录，再决定是直接构建还是先问用户。"""
+        """点「开始打包」：先看产物目录，有旧版本就先存起来再构建。"""
         if not self.state.can_start:
             issue = self.state.readiness.issue
             if issue:
                 self.notify(issue, Tone.DANGER)
             logger.debug("开始打包被忽略：can_start=%s", self.state.can_start)
             return
-        self.update(conflict=None, failure=None, outcome=None, phase="检查产物目录…")
+        self.update(failure=None, outcome=None, archived="", phase="检查产物目录…")
         self._run_task = asyncio.create_task(self._inspect_then_start())
 
     async def _inspect_then_start(self) -> None:
@@ -258,86 +258,82 @@ class BuildViewModel(ViewModel[BuildState]):
             self.notify(f"无法读取产物目录：{exc}", Tone.DANGER)
             return
 
-        self.update(output_state=stats)
+        self.update(output_state=stats, steps=self._steps(plan, stats))
         if stats.empty:
             await self._launch()
             return
 
         logger.info(
-            "产物目录已有 %d 个文件（%s），等待确认删除：%s",
+            "产物目录已有 %d 个文件（%s），先移入历史版本再打包：%s",
             stats.files,
             human_bytes(stats.bytes),
             plan.output,
         )
-        self.update(
-            phase="产物目录非空，等待确认…",
-            conflict=OutputConflict(
-                path=plan.output,
-                files=stats.files,
-                size=human_bytes(stats.bytes),
-                top=stats.top,
-            ),
-        )
+        await self._archive_then_build()
 
-    def cancel_conflict(self) -> None:
-        self.update(conflict=None, phase="")
+    async def _archive_then_build(self) -> None:
+        """把已有产物整体移入历史版本，然后开跑。
 
-    def confirm_remove(self) -> None:
-        """确认删除已有产物后继续打包。"""
-        self._run_task = asyncio.create_task(self._remove_then_build())
-
-    def retry_remove(self) -> None:
-        self.update(failure=None)
-        self._run_task = asyncio.create_task(self._remove_then_build())
-
-    async def _remove_then_build(self) -> None:
+        移动而不是删除：存档目录与产物目录同父级（同一个卷），改名即完成 ——
+        不占额外空间，旧版本随时能翻回来。也正因为不丢数据，这里不再先问一句。
+        """
         plan = self.state.plan
         if plan is None:
             return
-        self.update(phase="删除已有产物…")
+        self.update(phase=f"移入历史版本：{plan.archive_target().name}")
         try:
-            report = await self._service.purge(plan.output)
+            report = await self._service.archive(plan)
         except Exception as exc:
-            logger.exception("删除产物目录异常：%s", plan.output)
+            logger.exception("移入历史版本时出现未预期异常：%s", plan.output)
             self.update(phase="")
-            self.notify(f"删除失败：{exc}", Tone.DANGER)
+            self.notify(f"移入历史版本失败：{exc}", Tone.DANGER)
             return
 
         if not report.ok:
-            blocker = report.first_blocker
-            logger.warning(
-                "产物目录未能删净：%s（剩余 %d 个文件，首个阻塞 %s）",
-                plan.output,
-                report.remaining,
-                blocker.path if blocker else "未知",
-            )
+            logger.error("旧产物移入历史版本失败：%s（%s）", report.source, report.reason)
             self.update(
                 phase="",
-                failure=RemovalFailure(
-                    path=plan.output,
-                    reason=blocker.reason if blocker else "目录仍然存在，可能被其他程序占用",
-                    blocked_path=blocker.path if blocker else "",
-                    remaining=report.remaining,
+                failure=ArchiveFailure(
+                    path=report.source, target=report.target, reason=report.reason
                 ),
             )
             return
 
-        self.update(output_state=await self._service.inspect(plan.output))
-        await self._launch()
+        logger.info("旧产物已移入历史版本：%s", report.target)
+        stats = await self._service.inspect(plan.output)
+        self.update(output_state=stats, archived=report.target, steps=self._steps(plan, stats))
+        await self._launch(archived=report)
 
-    async def _launch(self) -> None:
+    def retry_archive(self) -> None:
+        """移动失败后重试（用户已经关掉占用目录的程序）。"""
+        self.update(failure=None)
+        self._run_task = asyncio.create_task(self._archive_then_build())
+
+    def dismiss_failure(self) -> None:
+        """关掉失败提示，保持产物目录原样，等用户自己处理。"""
+        self.update(failure=None, phase="")
+
+    async def _launch(self, archived: ArchiveReport | None = None) -> None:
         plan = self.state.plan
         if plan is None:
             return
         self._buffer.clear()
+        if archived is not None and archived.ok:
+            # 输出版本记录的第一行：上一次的产物搬去哪了，不用去翻日志才知道
+            self._buffer.append(
+                (
+                    "out",
+                    f"[历史版本] {archived.source} → {archived.target}"
+                    f"（{archived.files} 个文件）",
+                )
+            )
         self.update(
-            conflict=None,
             failure=None,
             outcome=None,
             running=True,
             phase="准备打包…",
-            console="",
-            console_lines=0,
+            console=self._console_text() if self._buffer else "",
+            console_lines=len(self._buffer),
         )
         try:
             result = await self._service.run(

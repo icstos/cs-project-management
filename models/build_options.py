@@ -82,7 +82,8 @@ BUILD_OPTIONS: tuple[BuildOption, ...] = (
         group="发布位置",
         flag="--output",
         hint="每个项目的产物落在「根目录 / 项目文件夹名」下，例如 D:\\Softwares 下的 "
-        "cs-project-management。根目录本身不需要预先存在。",
+        "cs-project-management。根目录本身不需要预先存在。重新打包时，已有产物会先"
+        "整体移入同级的「历史版本」文件夹（名字追加 -before-时间），不会被删除。",
         placeholder=r"D:\Softwares",
     ),
     BuildOption(

@@ -15,8 +15,10 @@ from datetime import date, datetime
 from pathlib import Path
 
 from models.enums import ChangeKind, Permission
+from models.settings import ARCHIVE_STAMP_FORMAT, ARCHIVE_SUFFIX_PREFIX, HISTORY_DIR_NAME
 
 __all__ = [
+    "ArchiveReport",
     "Blocker",
     "BuildOutcome",
     "BuildPlan",
@@ -310,6 +312,22 @@ class RemoveReport:
         return max(self.total - self.removed, 0)
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveReport:
+    """一次"把已有产物整体移入历史版本"的结果。
+
+    ``target`` 是**实际**落到的路径：同一秒内重复打包时目标名会追加 ``-2``，
+    所以别拿调用方自己拼的名字当结果，一切以这里为准（日志与控制台都照它写）。
+    """
+
+    ok: bool
+    source: str = ""
+    target: str = ""
+    files: int = 0
+    #: 失败原因，可直接展示给用户
+    reason: str = ""
+
+
 # --------------------------------------------------------------------------- 打包
 @dataclass(frozen=True, slots=True)
 class BuildPlan:
@@ -355,6 +373,23 @@ class BuildPlan:
     def output_name(self) -> str:
         """产物目录名（取源目录名，便于和项目文件夹一一对应）。"""
         return Path(self.output).name
+
+    @property
+    def history_dir(self) -> Path:
+        """旧版本的存档目录：产物目录**同级**的「历史版本」文件夹。
+
+        同级意味着同一个卷，移动只是一次改名，不产生拷贝开销。
+        """
+        return Path(self.output).parent / HISTORY_DIR_NAME
+
+    def archive_target(self, moment: datetime | None = None) -> Path:
+        """这次旧版本该落到的路径：``<历史版本>/<原名>-before-2026-09-05_10-30-22``。
+
+        只算名字不动文件系统 —— 界面预览与真正执行因此能指向同一个规则，
+        实际落到哪以 :class:`ArchiveReport` 为准（重名时会补序号）。
+        """
+        stamp = (moment or datetime.now()).strftime(ARCHIVE_STAMP_FORMAT)
+        return self.history_dir / f"{self.output_name}{ARCHIVE_SUFFIX_PREFIX}{stamp}"
 
     @property
     def build_dir(self) -> Path:

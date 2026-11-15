@@ -8,8 +8,9 @@
    ``<发布根目录>/<源目录名>``，``--artifact`` / ``--product`` 取台账里的项目名称；
 2. **体检** :meth:`BuildService.precheck` —— 把"必然失败"的情况（源目录没了、
    模板目录没了、输出目录套在源目录里）拦在真正开跑之前，别让用户白等十分钟；
-3. **腾空产物目录** :meth:`BuildService.inspect` / :meth:`BuildService.purge` ——
-   已有文件时由界面确认后才删，删不干净（文件被占用）时返回具体的阻塞路径；
+3. **腾出产物目录** :meth:`BuildService.inspect` / :meth:`BuildService.archive` ——
+   已有文件时先把整个目录移入同级的「历史版本」文件夹（名字追加 ``-before-时间``），
+   移不动（文件被占用）时返回具体原因，原目录保持原样；
 4. **执行** :meth:`BuildService.run` —— 交给打包端口跑完整轮（默认先清源目录的
    ``build``；打包页的开关关掉时跳过清理，直接增量构建），输出按行实时回流。
 """
@@ -21,7 +22,14 @@ from pathlib import Path
 
 from infra.concurrency import offload
 from infra.ports import FileSystemPort, LineSink, PackagerPort, PhaseSink, SystemShellPort
-from models.dtos import BuildOutcome, BuildPlan, Project, Readiness, RemoveReport, TreeStats
+from models.dtos import (
+    ArchiveReport,
+    BuildOutcome,
+    BuildPlan,
+    Project,
+    Readiness,
+    TreeStats,
+)
 from models.settings import BuildSettings, SettingsProvider
 
 logger = logging.getLogger(__name__)
@@ -133,18 +141,37 @@ class BuildService:
             warnings.append("源目录缺少 pyproject.toml，flet build 可能拿不到应用元数据")
         return Readiness(issue=None, warnings=tuple(warnings), template_ok=True)
 
-    def preview_steps(self, plan: BuildPlan) -> tuple[str, ...]:
-        """界面上的"将要执行的步骤"，与实际执行同源。"""
-        return self._packager.describe(plan)
+    def preview_steps(self, plan: BuildPlan, *, archive: bool = False) -> tuple[str, ...]:
+        """界面上的"将要执行的步骤"，与实际执行同源。
+
+        ``archive`` 由打包页按产物目录的**现状**传入：非空时第一步是"把旧产物
+        整体移入历史版本"，移完才轮到清理与构建。
+        """
+        steps = self._packager.describe(plan)
+        if not archive:
+            return steps
+        return (f"把已有产物移入历史版本：{plan.history_dir}", *steps)
 
     # ------------------------------------------------------------------ 产物目录
     async def inspect(self, output: str) -> TreeStats:
         """统计产物目录现状。可能上万文件，丢线程池。"""
         return await offload(self._fs.tree_stats, output)
 
-    async def purge(self, output: str) -> RemoveReport:
-        """删除产物目录。失败时 ``blockers`` 里有具体的阻塞路径。"""
-        return await offload(self._fs.remove_tree, output)
+    async def archive(self, plan: BuildPlan) -> ArchiveReport:
+        """把上一次的产物整体移入历史版本，返回**实际**落到的路径。
+
+        移动而不是删除：存档目录与产物目录同父级（同一个卷），改名即完成，
+        不占额外空间，旧版本随时可翻回来。移不动（多半是里面的程序还在运行）
+        时原目录保持原样，``reason`` 可直接展示。
+        """
+        target = plan.archive_target()
+        logger.info("把已有产物移入历史版本：%s → %s", plan.output, target)
+        report = await offload(self._fs.archive_tree, plan.output, str(target))
+        if report.ok:
+            logger.info("旧版本已存档：%s（%d 个文件）", report.target, report.files)
+        else:
+            logger.warning("旧版本存档失败：%s（%s）", report.source, report.reason)
+        return report
 
     async def reveal(self, path: str) -> tuple[bool, str]:
         """在文件管理器中打开目录（成功后返回 True）。"""
