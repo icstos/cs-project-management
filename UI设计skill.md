@@ -91,6 +91,13 @@ def text(value, *, level=TextLevel.BODY, color=None, weight=None, size=None, **k
     )
 ```
 
+> **字体当前的事实源是 cs-ui，不是本仓库**。上面的 `font_family=FONT_FAMILY` 是
+> "显式样式必须自带族名"这条规则的示意；族名本身由 `ui.core.fonts` 统一给出，
+> 注册（`page.fonts`）也由 `ui.apply_theme` 一并完成。项目内**不要再放字体文件、
+> 也不要自己拼 `page.fonts`** —— 只调 `ui.apply_theme(page, ui.theme_state())`，
+> 走 `view.design.text()` 排字即可。原因见 cs-ui `ui/core/fonts.py` 的模块说明：
+> flet 下发 `TextStyle` 是替换而非合并，样式里漏掉族名就会静默退回系统字体。
+
 ### 1.4 配色：主色 + 辅助色 + 中性色
 
 * **主色**选**低饱和**色系（本项目：`#4356C7` 靛蓝）。高饱和主色在整屏大面积使用时非常刺眼。

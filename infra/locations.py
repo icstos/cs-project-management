@@ -1,6 +1,6 @@
 """运行时位置解析。
 
-"数据放哪、字体在哪、产物落在哪个盘" 取决于运行环境（是否被 flet 打包、
+"数据放哪、产物落在哪个盘" 取决于运行环境（是否被 flet 打包、
 当前是什么操作系统），这属于基础设施的判断，所以集中在这里；
 业务代码只接收已经算好的路径。
 
@@ -13,8 +13,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-
-from models.settings import FONT_FILE_NAME
 
 #: 仓库根目录。``infra`` 的上一级，打包后指向解压出来的程序目录。
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -43,11 +41,6 @@ def log_dir() -> Path:
 
 def assets_dir() -> Path:
     return PACKAGE_ROOT / "assets"
-
-
-def font_file() -> Path:
-    """本机字体文件的绝对路径，仅用于启动时校验是否存在。"""
-    return assets_dir() / "fonts" / FONT_FILE_NAME
 
 
 def build_output_root(default: str) -> Path:
@@ -80,7 +73,6 @@ __all__ = [
     "build_template_dir",
     "data_dir",
     "database_file",
-    "font_file",
     "is_frozen",
     "log_dir",
 ]

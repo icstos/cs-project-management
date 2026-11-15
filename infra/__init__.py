@@ -18,7 +18,6 @@ from infra.locations import (
     build_template_dir,
     data_dir,
     database_file,
-    font_file,
     is_frozen,
     log_dir,
 )
@@ -53,7 +52,6 @@ __all__ = [
     "build_template_dir",
     "data_dir",
     "database_file",
-    "font_file",
     "gather_limited",
     "is_frozen",
     "log_dir",

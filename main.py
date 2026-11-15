@@ -1,8 +1,9 @@
 """应用入口：装配程序、配置页面与窗口，然后挂载根组件。
 
-页面级配置（主题、窗口、标题、字体）集中在这里 —— 组件不直接改 page 属性。
-**主题只有 cs-ui 一个事实源**：``ui.apply_theme`` 同时下发浅色与深色两套主题，
-本模块只负责告诉它"用哪个字体、先按哪一档显示"。
+页面级配置（主题、窗口、标题）集中在这里 —— 组件不直接改 page 属性。
+**主题与字体只有 cs-ui 一个事实源**：``ui.apply_theme`` 同时下发浅色与深色两套
+主题，并把框架自带的那款字体注册到 ``page.fonts``；本模块只负责告诉它"先按哪一档
+显示"，既不持有字体文件，也不碰字体族名 —— 字体随框架走，一次换、处处对。
 
 启动顺序有两条硬约束：
 
@@ -20,12 +21,9 @@ from functools import partial
 
 import ui
 
-from infra import locations
 from models.settings import (
     APP_NAME,
     APP_TAGLINE,
-    FONT_ASSET_PATH,
-    FONT_FAMILY,
     WINDOW_HEIGHT,
     WINDOW_MIN_HEIGHT,
     WINDOW_MIN_WIDTH,
@@ -42,17 +40,10 @@ def configure_page(page: ui.Page) -> None:
     page.title = f"{APP_NAME} · {APP_TAGLINE}"
     page.padding = 0
 
-    # 自定义字体必须先注册到 page.fonts（值为相对 assets 目录的路径），
-    # 主题里的 font_family 才解析得到；漏了这一步字体会静默退回系统默认。
-    font_file = locations.font_file()
-    if font_file.exists():
-        page.fonts = {FONT_FAMILY: FONT_ASSET_PATH}
-        ui.theme_state().font_family = FONT_FAMILY
-    else:
-        logger.warning("本地字体缺失，回退系统默认字体：%s", font_file)
-
     # 浅色为默认（与既有观感一致）；``apply_theme`` 会把明暗两套一起写进
     # page.theme / page.dark_theme，运行时切换只是换一棵现成的树。
+    # 字体注册也在这一次调用里完成（见 ui.core.fonts）：漏了注册，主题里的
+    # font_family 就无处可解析，字体会静默退回系统默认 —— 所以不在这里分两步做。
     theme = ui.theme_state()
     theme.set_mode("light")
     ui.apply_theme(page, theme)

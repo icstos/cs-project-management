@@ -25,14 +25,6 @@ WINDOW_HEIGHT = 840
 WINDOW_MIN_WIDTH = 1000
 WINDOW_MIN_HEIGHT = 660
 
-# --------------------------------------------------------------------------- 字体
-#: 全应用统一使用本地 "阿里巴巴普惠体"。
-#: ``FONT_ASSET_PATH`` 是相对 **assets 目录** 的路径，Flet 客户端按此加载；
-#: 绝对路径由 ``infra.locations.font_file()`` 给出，仅用于启动时校验。
-FONT_FAMILY = "AlibabaPuHuiTi"
-FONT_FILE_NAME = "AlibabaPuHuiTi-3-55-Regular.otf"
-FONT_ASSET_PATH = f"fonts/{FONT_FILE_NAME}"
-
 # --------------------------------------------------------------------------- 统计
 TREND_DAYS_DEFAULT = 30
 TREND_DAYS_MAX = 30
@@ -154,9 +146,6 @@ __all__ = [
     "APP_VERSION",
     "BUILD_TARGETS",
     "CHANGE_PREVIEW_LIMIT",
-    "FONT_ASSET_PATH",
-    "FONT_FAMILY",
-    "FONT_FILE_NAME",
     "REPORT_ROW_LIMIT",
     "TREND_DAYS_DEFAULT",
     "TREND_DAYS_MAX",
