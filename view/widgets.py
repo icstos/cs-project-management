@@ -133,14 +133,20 @@ def filled(
     icon: str | None = None,
     on_click=None,
     disabled: bool = False,
+    visible: bool = True,
     tooltip: str | None = None,
 ) -> Button:
-    """主操作：实色填充，一屏只该有一个。"""
+    """主操作：实色填充，一屏只该有一个。
+
+    ``visible`` 用于"两个互斥按钮常驻、只切可见性"的场合：组件重渲染时
+    在列表里换掉一整项会让 flet 按位置配对，容易把父数据错配到别的控件上。
+    """
     return Button(
         text,
         icon=icon,
         on_click=on_click,
         disabled=disabled,
+        visible=visible,
         tooltip=tooltip,
         style_type=StyleType.PRIMARY,
     )
@@ -152,6 +158,7 @@ def outlined(
     icon: str | None = None,
     on_click=None,
     disabled: bool = False,
+    visible: bool = True,
     tooltip: str | None = None,
 ) -> Button:
     """次操作：镂空（表面底 + 主色描边），与主操作同高。"""
@@ -160,6 +167,7 @@ def outlined(
         icon=icon,
         on_click=on_click,
         disabled=disabled,
+        visible=visible,
         tooltip=tooltip,
         style_type=StyleType.PRIMARY,
         plain=True,

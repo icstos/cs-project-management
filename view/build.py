@@ -87,24 +87,23 @@ def BuildView(*, vm: BuildViewModel, platform: FletPlatform) -> ui.Control:
             if state.clean_build
             else "跳过清理，直接基于上一次的 build 目录增量构建；旧版本自动存入"
             "「历史版本」，命令与输出全程记录",
+            # 两个互斥按钮**常驻**、只切 visible：打包结束那一刻如果在 actions
+            # 列表里把「终止」整项换成「开始打包」，flet 的组件重渲染会按位置
+            # 配对新旧控件，把 Expanded 父数据错配到别的控件上 —— Flutter 端
+            # 只画出一个灰块（release 客户端不报错），整页被盖住。
             actions=[
-                *(
-                    [
-                        widgets.outlined(
-                            "终止",
-                            icon=Icons.STOP_CIRCLE_OUTLINED,
-                            on_click=lambda _: vm.stop(),
-                        )
-                    ]
-                    if state.running
-                    else [
-                        widgets.filled(
-                            "开始打包",
-                            icon=Icons.ROCKET_LAUNCH,
-                            disabled=not state.can_start,
-                            on_click=lambda _: vm.request_start(),
-                        )
-                    ]
+                widgets.outlined(
+                    "终止",
+                    icon=Icons.STOP_CIRCLE_OUTLINED,
+                    visible=state.running,
+                    on_click=lambda _: vm.stop(),
+                ),
+                widgets.filled(
+                    "开始打包",
+                    icon=Icons.ROCKET_LAUNCH,
+                    visible=not state.running,
+                    disabled=not state.can_start,
+                    on_click=lambda _: vm.request_start(),
                 ),
                 widgets.outlined(
                     "打开发布目录",
