@@ -16,12 +16,24 @@
 
 from __future__ import annotations
 
-import logging
-from functools import partial
+import sys
+from pathlib import Path
 
-import ui
+# src 布局必需：隔离打包环境（flet / serious_python / PyInstaller）不会执行
+# pip install -e .，包会被放到 <app>/src/cs_pm/，而运行时 sys.path 只含 <app> 根、
+# 不含 src。这段同时覆盖开发态与打包态；删掉即打包后 ModuleNotFoundError。
+# 用 __file__ 而非 cwd（打包后 cwd 不确定）；守卫让非 src 布局不插入无效路径。
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path and (_SRC / "cs_pm").is_dir():
+    sys.path.insert(0, str(_SRC))
 
-from models.settings import (
+import logging  # noqa: E402
+from functools import partial  # noqa: E402
+
+import ui  # noqa: E402
+
+from cs_pm.models.settings import (  # noqa: E402
     APP_NAME,
     APP_TAGLINE,
     WINDOW_HEIGHT,
@@ -29,8 +41,8 @@ from models.settings import (
     WINDOW_MIN_WIDTH,
     WINDOW_WIDTH,
 )
-from view.app import App
-from viewmodel.container import Application, build_application
+from cs_pm.view.app import App  # noqa: E402
+from cs_pm.viewmodel.container import Application, build_application  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

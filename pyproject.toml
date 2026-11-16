@@ -24,8 +24,16 @@ cs-pm = "main:run"
 [tool.setuptools]
 py-modules = ["main"]
 
+# 显式区分两处源码根：main.py 在仓库根，应用包在 src/cs_pm/。
+# 若用 package-dir={""="src"}，editable install 只会把 src/ 加进 sys.path，
+# 根目录的 main.py 将不可 import，cs-pm 入口会 ModuleNotFoundError。
+[tool.setuptools.package-dir]
+"" = "."
+cs_pm = "src/cs_pm"
+
 [tool.setuptools.packages.find]
-include = ["models*", "infra*", "service*", "viewmodel*", "view*"]
+where = ["src"]
+include = ["cs_pm*"]
 
 [tool.ruff]
 target-version = "py312"
