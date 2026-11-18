@@ -168,6 +168,10 @@ class ProjectService:
         """在文件管理器中打开目录（成功后返回 True）。"""
         return await offload(self._shell.reveal, path)
 
+    async def open_in_editor(self, path: str) -> tuple[bool, str]:
+        """用 VS Code 打开目录（成功后返回 True）。"""
+        return await offload(self._shell.open_in_editor, path)
+
     # ------------------------------------------------------------------ 内部
     def _resolve_repo(self, local_path: str) -> str:
         """校验并规范化用户填入的目录。

@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,15 @@ _SHCNF_FLUSH = 0x1000
 #: TortoiseGit 的状态缓存进程（TortoiseSVN 的 TSVNCache 与它无关）
 _CACHE_IMAGE = "TGitCache.exe"
 _CACHE_FOLDER = "TortoiseGit"
+
+#: VS Code 命令行入口在各平台的常见名字
+_EDITOR_COMMANDS = ("code", "code.cmd")
+#: Windows 上 VS Code 的默认安装目录（用户级 / 系统级）
+_EDITOR_RELATIVE = (
+    ("LOCALAPPDATA", "Programs/Microsoft VS Code/bin/code.cmd"),
+    ("ProgramFiles", "Microsoft VS Code/bin/code.cmd"),
+    ("ProgramFiles(x86)", "Microsoft VS Code/bin/code.cmd"),
+)
 
 __all__ = ["ExplorerShell"]
 
@@ -58,6 +68,27 @@ class ExplorerShell:
             return (False, f"无法调用文件管理器：{exc}")
         return (True, "")
 
+    def open_in_editor(self, path: str) -> tuple[bool, str]:
+        """用 VS Code 打开目录，返回 (是否成功, 失败原因)。"""
+        target = Path(path)
+        if not target.is_dir():
+            logger.warning("编辑器打开被跳过，路径不可用：%s", target)
+            return (False, "目录不存在或已被移动")
+
+        executable = _editor_executable()
+        if executable is None:
+            logger.warning("找不到 VS Code 命令，无法打开目录：%s", target)
+            return (False, "未找到 VS Code，请确认已安装并加入了 PATH")
+
+        command = [executable, str(target)]
+        logger.info("调用代码编辑器：%s", " ".join(command))
+        try:
+            subprocess.Popen(command)
+        except OSError as exc:
+            logger.warning("无法调用代码编辑器：%s", exc)
+            return (False, f"无法调用 VS Code：{exc}")
+        return (True, "")
+
     def notify_changed(self, path: str) -> None:
         """通知外壳该目录变了，并让 TortoiseGit 的角标缓存重扫。"""
         if sys.platform != "win32":
@@ -71,6 +102,26 @@ class ExplorerShell:
 
 
 # --------------------------------------------------------------------------- 内部
+def _editor_executable() -> str | None:
+    """找到 VS Code 命令行入口。
+
+    优先 PATH（``code`` / ``code.cmd``），再查 Windows 默认安装目录；找不到就返回
+    ``None``，由调用方把"没装 / 没配 PATH"这层意思说给用户。
+    """
+    for name in _EDITOR_COMMANDS:
+        found = shutil.which(name)
+        if found:
+            return found
+    for env, relative in _EDITOR_RELATIVE:
+        root = os.environ.get(env)
+        if not root:
+            continue
+        candidate = Path(root) / relative
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _refresh_disabled() -> bool:
     """``CSPM_SHELL_REFRESH=off`` 时不再动外壳（给不想被动到 TortoiseGit 的人留的口子）。"""
     value = os.environ.get("CSPM_SHELL_REFRESH", "").strip().lower()

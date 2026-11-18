@@ -362,6 +362,11 @@ class ProjectsViewModel(ViewModel[ProjectsState]):
         if not ok:
             self.notify(reason, Tone.DANGER)
 
+    async def open_in_editor(self, project: Project) -> None:
+        ok, reason = await self._service.open_in_editor(project.local_path)
+        if not ok:
+            self.notify(reason, Tone.DANGER)
+
     def request_copy_path(self, project: Project) -> None:
         """请视图把路径写进剪贴板。"""
         self.ask_platform(PlatformAction.COPY_TEXT, text=project.local_path)

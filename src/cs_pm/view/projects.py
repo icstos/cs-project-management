@@ -408,6 +408,13 @@ def _project_card(
                                             ),
                                         ),
                                         PopupMenuItem(
+                                            content=Text("使用VSCode打开", size=13),
+                                            icon=Icons.CODE,
+                                            on_click=lambda _, p=project: page.run_task(
+                                                vm.open_in_editor, p
+                                            ),
+                                        ),
+                                        PopupMenuItem(
                                             content=Text("复制本地路径", size=13),
                                             icon=Icons.CONTENT_COPY,
                                             on_click=lambda _, p=project: vm.request_copy_path(p),

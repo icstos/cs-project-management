@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 # cs-ui 目前是本地可编辑安装，所以这里给**直接引用**（file URL）——PyPI 上没有这个包，
 # 写 `cs-ui>=0.2.0` 会让 `flet build` 在装依赖那一步解析失败。
 dependencies = [
-    "cs-ui @ file:///D:/CSTOS/projects/cs-ui",
+    "cs-ui>=0.3.1",
     "sqlmodel>=0.0.39",
 ]
 
